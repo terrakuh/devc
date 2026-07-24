@@ -39,6 +39,9 @@ type Params struct {
 	ControlDir string
 	// Forwards are host->container port forwards rendered as LocalForward.
 	Forwards []Forward
+	// ForwardAgent renders `ForwardAgent yes` so the client forwards its
+	// ssh-agent into the container (the agent must also allow it). Off by default.
+	ForwardAgent bool
 }
 
 // Forward is one LocalForward entry.
@@ -67,7 +70,7 @@ func Render(p Params) string {
 	fmt.Fprintf(&b, "    ControlPath           %s/control-%%r\n", p.ControlDir)
 	fmt.Fprintf(&b, "    ControlPersist        10m\n")
 	fmt.Fprintf(&b, "    ServerAliveInterval   30\n")
-	fmt.Fprintf(&b, "    ForwardAgent          no\n")
+	fmt.Fprintf(&b, "    ForwardAgent          %s\n", yesNo(p.ForwardAgent))
 
 	// Deterministic forward order.
 	fwds := append([]Forward(nil), p.Forwards...)
@@ -91,6 +94,11 @@ func proxyCommand(p Params) string {
 	}
 	if p.RuntimePath != "" {
 		parts = append(parts, "--runtime", maybeQuote(p.RuntimePath))
+	}
+	// Bake the agent-forwarding decision in so the editor's ProxyCommand permits
+	// it on the agent side even when it came from a CLI override, not the config.
+	if p.ForwardAgent {
+		parts = append(parts, "--forward-agent")
 	}
 	parts = append(parts, maybeQuote(p.WorkspaceName))
 	return strings.Join(parts, " ")
@@ -122,6 +130,14 @@ func needsQuote(r rune) bool {
 	default:
 		return true
 	}
+}
+
+// yesNo renders a bool as the "yes"/"no" ssh config tokens.
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
 }
 
 // File wraps one or more Host blocks with a managed-file header.

@@ -56,6 +56,10 @@ type Raw struct {
 	PostStartCommand     Command `json:"postStartCommand"`
 	PostAttachCommand    Command `json:"postAttachCommand"`
 
+	// Customizations is the devcontainer tool-config map. devc reads only its own
+	// "devc" subkey and ignores the rest (e.g. "vscode").
+	Customizations RawCustomizations `json:"customizations"`
+
 	// Explicitly unsupported; decoded so Resolve can reject them clearly.
 	Features            json.RawMessage `json:"features"`
 	HostRequirements    json.RawMessage `json:"hostRequirements"`
@@ -64,6 +68,29 @@ type Raw struct {
 	// Extra holds any key not mapped above, for a diagnostic warning. Populated
 	// by UnmarshalJSON.
 	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// RawCustomizations holds the "customizations" object. Only the "devc" entry is
+// decoded; other tools' entries are dropped.
+type RawCustomizations struct {
+	Devc *RawDevc `json:"devc"`
+}
+
+// RawDevc is the "customizations.devc" block: devc's own options.
+type RawDevc struct {
+	Credentials *RawCredentials `json:"credentials"`
+}
+
+// RawCredentials selects which host credentials are made available in the
+// container. Pointers tell "unset" apart from "false". Room to add more
+// mechanisms later (gpg, git credential helper, docker).
+type RawCredentials struct {
+	// ForwardAgent forwards the host ssh-agent; keys stay on the host and only a
+	// proxy socket plus SSH_AUTH_SOCK exist in the container.
+	ForwardAgent *bool `json:"forwardAgent"`
+	// SyncGitConfig copies curated host git config (identity, signing) into the
+	// container on `devc up`.
+	SyncGitConfig *bool `json:"syncGitConfig"`
 }
 
 // RawBuild is the object form of the "build" property.
@@ -89,7 +116,7 @@ var knownKeys = map[string]bool{
 	"waitFor": true, "initializeCommand": true, "onCreateCommand": true,
 	"updateContentCommand": true, "postCreateCommand": true,
 	"postStartCommand": true, "postAttachCommand": true, "features": true,
-	"hostRequirements": true, "updateRemoteUserUID": true,
+	"hostRequirements": true, "updateRemoteUserUID": true, "customizations": true,
 }
 
 // UnmarshalJSON decodes into Raw and records any unrecognized top-level keys in

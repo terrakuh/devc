@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/terrakuh/devc/runtime"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/terrakuh/devc/runtime"
 )
 
 func TestNormalizeArch(t *testing.T) {
@@ -20,8 +20,9 @@ func TestNormalizeArch(t *testing.T) {
 }
 
 func TestAgentServeArgs(t *testing.T) {
-	args := AgentServeArgs("ctr-1", "vscode", "/workspace")
+	args := AgentServeArgs("ctr-1", "vscode", "/workspace", false)
 	assert.Equal(t, "exec", args[0])
+	assert.NotContains(t, args, "--forward-agent", "agent forwarding is off by default")
 	assert.Contains(t, args, "--interactive")
 	// The agent runs as root inside the container (podman --user 0), before it
 	// drops to the session user itself.
@@ -49,6 +50,10 @@ func TestAgentServeArgs(t *testing.T) {
 	if i := indexOf(args, "--cwd"); assert.GreaterOrEqual(t, i, 0) {
 		assert.Equal(t, "/workspace", args[i+1])
 	}
+
+	// With forwarding enabled, __serve gets --forward-agent.
+	fwd := AgentServeArgs("ctr-1", "vscode", "/workspace", true)
+	assert.Contains(t, fwd, "--forward-agent")
 }
 
 func TestInjectArchMismatch(t *testing.T) {

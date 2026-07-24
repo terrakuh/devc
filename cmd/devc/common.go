@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 
 	"github.com/terrakuh/devc/config"
 	"github.com/terrakuh/devc/container"
@@ -22,6 +23,10 @@ type commonFlags struct {
 	userns     string
 	selinux    string
 	quiet      bool
+
+	// Overrides for customizations.devc.credentials. Unset means "use the config".
+	forwardAgent  optionalBool
+	syncGitConfig optionalBool
 }
 
 func (c *commonFlags) register(fs *flag.FlagSet) {
@@ -33,7 +38,35 @@ func (c *commonFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&c.userns, "userns", "", "value for --userns (default: keep-id under rootless podman)")
 	fs.StringVar(&c.selinux, "selinux", "auto", "SELinux relabel of the workspace mount: auto|z|Z|none")
 	fs.BoolVar(&c.quiet, "q", false, "suppress warnings")
+	fs.Var(&c.forwardAgent, "forward-agent", "override credentials.forwardAgent (ssh-agent forwarding)")
+	fs.Var(&c.syncGitConfig, "sync-git-config", "override credentials.syncGitConfig")
 }
+
+// optionalBool is a bool flag that remembers whether it was set, so a CLI value
+// can override the config while an absent flag leaves the config untouched.
+type optionalBool struct {
+	set bool
+	val bool
+}
+
+func (o *optionalBool) String() string {
+	if o == nil || !o.set {
+		return ""
+	}
+	return strconv.FormatBool(o.val)
+}
+
+func (o *optionalBool) Set(s string) error {
+	v, err := strconv.ParseBool(s)
+	if err != nil {
+		return err
+	}
+	o.val, o.set = v, true
+	return nil
+}
+
+// IsBoolFlag lets the flag be given as "--forward-agent" (no value), like -q.
+func (o *optionalBool) IsBoolFlag() bool { return true }
 
 // env bundles everything a command needs after the common setup: the resolved
 // spec, a runner, and the create options derived from flags + runtime probing.
@@ -71,6 +104,13 @@ func setup(ctx context.Context, c *commonFlags) (*env, error) {
 			fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 		}
 	}
+	if c.forwardAgent.set {
+		spec.Credentials.ForwardAgent = c.forwardAgent.val
+	}
+	if c.syncGitConfig.set {
+		spec.Credentials.SyncGitConfig = c.syncGitConfig.val
+	}
+
 	runner, err := runtime.Detect(c.runtime)
 	if err != nil {
 		return nil, err

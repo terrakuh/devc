@@ -76,6 +76,7 @@ Because the binary runs inside an arbitrary image, it **must** be built static
 | `devc list [--json]`             | every devc workspace on the host (found by label)                                                                                     |
 | `devc logs [--follow] [service]` | container / compose logs                                                                                                              |
 | `devc exec [-T] -- <cmd>`        | run as the remote user in the workspace folder, with `remoteEnv`                                                                      |
+| `devc code [--editor <bin>]`     | open the workspace in VSCodium (preferred) or VS Code over Remote-SSH                                                                 |
 | `devc ssh [<name>]`              | spawn `ssh devc.<name>` (shares the ControlMaster)                                                                                    |
 | `devc ssh --stdio [--start]`     | ProxyCommand transport (what the generated config runs)                                                                               |
 | `devc ssh-config [--print]`      | regenerate (or preview) the workspace's ssh config block                                                                              |
@@ -84,7 +85,8 @@ Because the binary runs inside an arbitrary image, it **must** be built static
 | `devc config [--raw]`            | print the resolved `Spec` (or the post-substitution raw doc)                                                                          |
 
 Global flags: `--path`, `--config`, `--runtime`, `--compose-cmd`, `--platform`,
-`--selinux`, `--userns`, `-q`.
+`--selinux`, `--userns`, `-q`, `--forward-agent`, `--sync-git-config` (the last
+two override the matching `customizations.devc.credentials` keys).
 
 ---
 
@@ -107,15 +109,58 @@ covers `${localWorkspaceFolder}`, `${localEnv:VAR:default}`,
 `${containerWorkspaceFolder}`, `${devcontainerId}`, and deferred
 `${containerEnv:VAR}`.
 
+devc reads its own options from `customizations.devc` (see
+[Credential forwarding](#credential-forwarding)); other `customizations` entries
+(e.g. `vscode`) are ignored.
+
 **Not supported (by design):** `features`, `hostRequirements`, and
-`updateRemoteUserUID` are rejected with a clear error. `customizations` and
-`portsAttributes` are parsed and ignored. On the compose path devc **never
+`updateRemoteUserUID` are rejected with a clear error. `portsAttributes` is
+parsed and ignored. On the compose path devc **never
 generates an override file**, so single-container-only keys used alongside
 `dockerComposeFile` are rejected instead of silently dropped; the compose file
 itself must keep the service alive (`command: sleep infinity`).
 
 `forwardPorts` become `LocalForward` lines in the ssh config, so the ports work
 the moment you connect, with no publishing and no host-port collisions.
+
+---
+
+## Credential forwarding
+
+devc can make host credentials available in the container without copying them.
+Both options are opt-in under `customizations.devc.credentials`:
+
+```jsonc
+{
+  "image": "fedora:44",
+  "customizations": {
+    "devc": {
+      "credentials": {
+        "forwardAgent": true, // ssh-agent forwarding for git-over-ssh
+        "syncGitConfig": true, // copy host git identity into the container
+      },
+    },
+  },
+}
+```
+
+Override either per-run without editing the file: `devc up --forward-agent`,
+`devc up --sync-git-config=false`.
+
+- **`forwardAgent`** turns on ssh-agent forwarding. The ssh config gets
+  `ForwardAgent yes` and the injected agent exposes a proxy `SSH_AUTH_SOCK`
+  inside the container. Signing requests are tunnelled back to your host agent,
+  so the private key never enters the container and there is no ssh-agent (and no
+  key) in the image. You need a running host agent with keys added
+  (`ssh-add -l` should list them). No host agent means no `SSH_AUTH_SOCK` is set.
+- **`syncGitConfig`** copies a small allowlist of host git settings (`user.name`,
+  `user.email`, `user.signingkey`, `commit.gpgsign`, `tag.gpgsign`, `gpg.format`,
+  `init.defaultBranch`) into the container's `~/.config/git/config` on `devc up`.
+  That file sits below `~/.gitconfig` in git's precedence, so the container can
+  still override it. It is best-effort: no host git or config just skips.
+
+The `credentials` block is the place for future forwarding (gpg, git credential
+helper, docker) to land.
 
 ---
 

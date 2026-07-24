@@ -30,6 +30,7 @@ Commands:
   logs        Show container (or compose) logs
   exec        Run a command inside the workspace container
   ssh         SSH into the workspace (spawn ssh, or --stdio ProxyCommand)
+  code        Open the workspace in VSCodium/VS Code over Remote-SSH
   ssh-config  Regenerate or print the workspace's ssh config block
   keys        Show or rotate the workspace's SSH keys
   doctor      Diagnose a workspace (runtime, tools, agent) for SSH/editor use
@@ -66,6 +67,8 @@ func main() {
 		err = runExec(args)
 	case "ssh":
 		err = runSSH(args)
+	case "code":
+		err = runCode(args)
 	case "ssh-config":
 		err = runSSHConfig(args)
 	case "keys":

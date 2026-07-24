@@ -163,7 +163,7 @@ func writeEnvFile(ctx context.Context, r runtime.Runner, containerRef string, en
 // over the exec pipe: `exec -i --user 0 <ctr> /.devc/agent __serve`. The agent
 // runs as root and drops to the session user itself (--user below), the same
 // privilege model as sshd.
-func AgentServeArgs(containerRef, user, cwd string) []string {
+func AgentServeArgs(containerRef, user, cwd string, forwardAgent bool) []string {
 	args := []string{"exec", "--interactive", "--user", "0", containerRef, AgentBinary, "__serve",
 		"--host-key", AgentHostKey,
 		"--authorized", AgentAuthKey,
@@ -174,6 +174,9 @@ func AgentServeArgs(containerRef, user, cwd string) []string {
 	}
 	if cwd != "" {
 		args = append(args, "--cwd", cwd)
+	}
+	if forwardAgent {
+		args = append(args, "--forward-agent")
 	}
 	return args
 }

@@ -43,6 +43,7 @@ func (s *Server) handleSession(ctx context.Context, newChan ssh.NewChannel) {
 	defer channel.Close()
 
 	for req := range requests {
+		s.debugf("session request: type=%s", req.Type)
 		switch req.Type {
 		case "pty-req":
 			sess.handlePTYReq(req)
@@ -50,6 +51,8 @@ func (s *Server) handleSession(ctx context.Context, newChan ssh.NewChannel) {
 			sess.handleEnv(req)
 		case "window-change":
 			sess.handleWindowChange(req)
+		case "auth-agent-req@openssh.com":
+			sess.handleAgentForwardReq(req)
 		case "shell":
 			sess.start(ctx, req, nil)
 		case "exec":
@@ -115,6 +118,7 @@ func (s *session) start(ctx context.Context, req *ssh.Request, command *string) 
 		s.exit(1)
 		return
 	}
+	s.srv.debugf("start: pty=%v SSH_AUTH_SOCK=%q cmd=%s", s.ptyReq, s.srv.agentSock(), commandLabel(command))
 	reply(req, true)
 
 	if s.ptyReq {
@@ -183,6 +187,12 @@ func (s *session) buildEnv(u *userInfo) []string {
 	}
 	for k, v := range s.env {
 		merged[k] = v
+	}
+	// Once the connection has agent forwarding, every session gets SSH_AUTH_SOCK,
+	// not only the one that sent auth-agent-req. OpenSSH requests forwarding once
+	// per shared connection, but VS Code may launch its server on a later session.
+	if sock := s.srv.agentSock(); sock != "" {
+		merged["SSH_AUTH_SOCK"] = sock
 	}
 	if s.ptyReq && s.term != "" {
 		merged["TERM"] = s.term
@@ -284,6 +294,20 @@ func reply(req *ssh.Request, ok bool) {
 func subsystemName(payload []byte) string {
 	name, _ := readString(payload)
 	return name
+}
+
+// commandLabel is a short, log-safe label for a session command: "(shell)" for
+// an interactive shell, else the exec command truncated.
+func commandLabel(command *string) string {
+	if command == nil {
+		return "(shell)"
+	}
+	c := *command
+	const max = 160
+	if len(c) > max {
+		return c[:max] + "..."
+	}
+	return c
 }
 
 // execPayload extracts the command string from an "exec" request payload.

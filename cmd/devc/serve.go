@@ -52,6 +52,7 @@ func runServe(args []string) error {
 	envFile := fs.String("env-file", "", "path to a KEY=VALUE env file injected into sessions")
 	user := fs.String("user", "", "OS user to run sessions as")
 	cwd := fs.String("cwd", "", "working directory for sessions")
+	forwardAgent := fs.Bool("forward-agent", false, "allow ssh-agent forwarding (auth-agent-req)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -69,11 +70,12 @@ func runServe(args []string) error {
 	}
 
 	srv, err := agent.NewServer(agent.Config{
-		HostKey:     signer,
-		Authorized:  authKeys,
-		User:        *user,
-		Cwd:         *cwd,
-		Environment: readEnvFile(*envFile),
+		HostKey:         signer,
+		Authorized:      authKeys,
+		User:            *user,
+		Cwd:             *cwd,
+		Environment:     readEnvFile(*envFile),
+		AgentForwarding: *forwardAgent,
 	})
 	if err != nil {
 		return err

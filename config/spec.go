@@ -26,7 +26,21 @@ type Spec struct {
 	EnvProbe        EnvProbe       `json:"envProbe"`
 	WaitFor         HookName       `json:"waitFor"`
 
+	Credentials Credentials `json:"credentials"`
+
 	Hooks Hooks `json:"hooks"`
+}
+
+// Credentials is the resolved devc.credentials block: which host credentials are
+// forwarded or synced into the container. All default to false (opt-in). New
+// mechanisms (gpg, git credential helper, docker) get added here.
+type Credentials struct {
+	// ForwardAgent enables ssh-agent forwarding: the ssh config gets
+	// `ForwardAgent yes` and the injected agent exposes a proxy SSH_AUTH_SOCK.
+	ForwardAgent bool `json:"forwardAgent"`
+	// SyncGitConfig copies curated host git config (identity, signing) into the
+	// container on `devc up`.
+	SyncGitConfig bool `json:"syncGitConfig"`
 }
 
 // Kind distinguishes the three bring-up strategies.

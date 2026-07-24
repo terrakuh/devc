@@ -86,7 +86,7 @@ func sshStdio(ctx context.Context, e *env, start bool, dbg *proxyLog) (err error
 		}
 	}
 
-	argv := container.AgentServeArgs(ref, e.spec.RemoteUser, e.spec.ContainerWorkspaceFolder)
+	argv := container.AgentServeArgs(ref, e.spec.RemoteUser, e.spec.ContainerWorkspaceFolder, e.spec.Credentials.ForwardAgent)
 	dbg.logf("exec: %s %s", e.runner.Name(), strings.Join(argv, " "))
 	io := runtime.IO{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}
 	return e.runner.Run(ctx, argv, io)

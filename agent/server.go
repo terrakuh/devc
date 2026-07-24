@@ -14,11 +14,19 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log"
 	"net"
+	"os"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 )
+
+// debugEnvKey names a remoteEnv entry whose value is a file path. When set, the
+// agent appends a trace of its connection, channel, and forwarding events there.
+// It is a diagnostic hook, off unless the path is provided.
+const debugEnvKey = "DEVC_AGENT_LOG"
 
 // Config configures a Server. All fields are required except Environment.
 type Config struct {
@@ -33,11 +41,23 @@ type Config struct {
 	Cwd string
 	// Environment is injected into every session (remoteEnv + probed env).
 	Environment map[string]string
+	// AgentForwarding allows ssh-agent forwarding: when the client requests it
+	// (auth-agent-req@openssh.com), the server exposes a proxy SSH_AUTH_SOCK that
+	// tunnels signing requests back to the client's agent. Off by default.
+	AgentForwarding bool
 }
 
 // Server serves one SSH connection over a byte stream.
 type Server struct {
-	cfg Config
+	cfg  Config
+	dbg  *log.Logger // nil unless DEVC_AGENT_LOG is set
+	conn ssh.Conn    // set in Serve; used to open auth-agent channels back
+
+	// Agent forwarding is per connection, not per session: VS Code launches its
+	// server on one session and runs terminals as its children, so the forwarded
+	// socket must outlive any single session. Created lazily on first request.
+	fwdMu sync.Mutex
+	fwd   *agentForward
 }
 
 // NewServer validates cfg and returns a Server.
@@ -48,7 +68,27 @@ func NewServer(cfg Config) (*Server, error) {
 	if len(cfg.Authorized) == 0 {
 		return nil, fmt.Errorf("agent: at least one authorized key is required")
 	}
-	return &Server{cfg: cfg}, nil
+	return &Server{cfg: cfg, dbg: newDebugLogger(cfg.Environment[debugEnvKey])}, nil
+}
+
+// newDebugLogger opens the trace file in append mode. A missing path or an open
+// error just disables logging; diagnostics must never break the agent.
+func newDebugLogger(path string) *log.Logger {
+	if path == "" {
+		return nil
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644) //nolint:gosec // operator-provided path
+	if err != nil {
+		return nil
+	}
+	return log.New(f, fmt.Sprintf("pid=%d ", os.Getpid()), log.LstdFlags|log.Lmicroseconds)
+}
+
+// debugf writes a trace line when logging is enabled.
+func (s *Server) debugf(format string, a ...any) {
+	if s.dbg != nil {
+		s.dbg.Printf(format, a...)
+	}
 }
 
 // rwc adapts a separate reader and writer (stdin/stdout) into the net.Conn that
@@ -86,6 +126,9 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 		return fmt.Errorf("ssh handshake: %w", err)
 	}
 	defer conn.Close()
+	s.conn = conn
+	defer s.closeAgentForward()
+	s.debugf("connection established: user=%s forwarding-allowed=%v", conn.User(), s.cfg.AgentForwarding)
 
 	// Cancel the handler tree when ctx is done or the connection dies.
 	ctx, cancel := context.WithCancel(ctx)
@@ -103,6 +146,7 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 	go s.handleGlobalRequests(ctx, fwds, globalReqs)
 
 	for newChan := range chans {
+		s.debugf("channel open: type=%s", newChan.ChannelType())
 		switch newChan.ChannelType() {
 		case "session":
 			go s.handleSession(ctx, newChan)

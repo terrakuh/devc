@@ -30,6 +30,7 @@ func TestResolveCompose(t *testing.T) {
 		"dockerComposeFile": ["compose.yaml", "telemetry.dev.yaml"],
 		"forwardPorts": [8080, 5173],
 		"customizations": {"vscode": {"extensions": ["golang.go"]}},
+		"someUnknownKey": true,
 	}`)
 	spec, warnings, err := LoadSpec(dir, "")
 	if err != nil {

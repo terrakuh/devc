@@ -51,6 +51,7 @@ func Resolve(l *Loaded) (*Spec, error) {
 		ContainerUser:            r.ContainerUser,
 		RemoteUser:               r.RemoteUser,
 		RemoteEnv:                nonEmptyMap(r.RemoteEnv),
+		Credentials:              resolveCredentials(r),
 		OverrideCommand:          defaultOverrideCommand(r, kind),
 		Hooks: Hooks{
 			Initialize:    r.InitializeCommand,
@@ -266,6 +267,20 @@ func expandTilde(p string) string {
 		return home
 	}
 	return home + p[1:] // keep the separator: "~/x" -> "<home>/x"
+}
+
+// resolveCredentials flattens customizations.devc.credentials into the Spec.
+// Everything defaults to false: credential forwarding is opt-in.
+func resolveCredentials(r *Raw) Credentials {
+	devc := r.Customizations.Devc
+	if devc == nil || devc.Credentials == nil {
+		return Credentials{}
+	}
+	c := devc.Credentials
+	return Credentials{
+		ForwardAgent:  boolValue(c.ForwardAgent, false),
+		SyncGitConfig: boolValue(c.SyncGitConfig, false),
+	}
 }
 
 func defaultOverrideCommand(r *Raw, kind Kind) bool {

@@ -68,6 +68,21 @@ func TestRenderQuotesPathsWithSpaces(t *testing.T) {
 		"--config '/home/me/a b/.devcontainer/devcontainer.json' --runtime /usr/bin/podman shop")
 }
 
+func TestRenderForwardAgentDefaultOff(t *testing.T) {
+	out := Render(sampleParams())
+	assert.Contains(t, out, "ForwardAgent          no")
+	assert.NotContains(t, out, "--forward-agent")
+}
+
+func TestRenderForwardAgentOn(t *testing.T) {
+	p := sampleParams()
+	p.ForwardAgent = true
+	out := Render(p)
+	assert.Contains(t, out, "ForwardAgent          yes")
+	// The ProxyCommand also carries it so the agent side permits forwarding.
+	assert.Contains(t, out, "--forward-agent shop")
+}
+
 func TestRenderOmitsEmptyRuntime(t *testing.T) {
 	p := sampleParams()
 	p.RuntimePath = ""

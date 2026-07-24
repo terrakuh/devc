@@ -50,6 +50,14 @@ func provision(ctx context.Context, e *env, containerRef string) error {
 	if err := writeSSHConfig(e, keySet, dir, self); err != nil {
 		return fmt.Errorf("write ssh config: %w", err)
 	}
+
+	// Git config sync is a convenience, not part of the connection path: a
+	// failure (no host git, unwritable HOME) warns but never fails `up`.
+	if e.spec.Credentials.SyncGitConfig {
+		if err := syncGitConfig(ctx, e, containerRef); err != nil && !e.flags.quiet {
+			fmt.Fprintf(os.Stderr, "warning: sync git config: %v\n", err)
+		}
+	}
 	return nil
 }
 
@@ -75,6 +83,7 @@ func writeSSHConfig(e *env, keySet *keys.Set, dir *state.Dir, devcBin string) er
 		KnownHostsFile: keySet.KnownHosts,
 		ControlDir:     ctlDir,
 		Forwards:       forwards,
+		ForwardAgent:   e.spec.Credentials.ForwardAgent,
 	})
 
 	confPath := devcSSHConfigPath()
