@@ -1,0 +1,58 @@
+name: release
+
+# Build static devc binaries and attach them to a published GitHub release.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write # needed to upload assets to the release
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - run: go vet ./...
+      - run: go test ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # devc runs on the host and injects itself into the container, so the
+        # host binary is always linux and must match the container's CPU arch.
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0" # must be static: the binary runs inside arbitrary images
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          # No -X main.version: this is a clean checkout at the release tag, so Go
+          # stamps the tag into the build info and initVersion() reads it back.
+          out="devc-linux-${GOARCH}"
+          go build -trimpath -ldflags "-s -w" -o "${out}" ./cmd/devc
+          sha256sum "${out}" > "${out}.sha256"
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "devc-linux-${{ matrix.goarch }}" \
+            "devc-linux-${{ matrix.goarch }}.sha256" \
+            --clobber
