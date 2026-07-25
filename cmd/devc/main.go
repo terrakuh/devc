@@ -25,6 +25,7 @@ Commands:
   up          Create/start the workspace container(s)
   down        Remove the workspace container(s)
   stop        Stop the workspace without removing it
+  restart     Restart the workspace's main service (compose: --all for every service)
   status      Show the workspace's state
   list        List all devc workspaces on this host
   logs        Show container (or compose) logs
@@ -57,6 +58,8 @@ func main() {
 		err = runDown(args)
 	case "stop":
 		err = runStop(args)
+	case "restart":
+		err = runRestart(args)
 	case "status":
 		err = runStatus(args)
 	case "list":

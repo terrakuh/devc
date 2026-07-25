@@ -64,6 +64,28 @@ func TestComposeDownArgs(t *testing.T) {
 	assert.Equal(t, "--volumes", withVols[len(withVols)-1])
 }
 
+func TestComposeRestartArgs(t *testing.T) {
+	spec := composeSpec()
+
+	// Default: only the attach service, after the verb.
+	assert.Equal(t, []string{
+		"--project-name", "p",
+		"--file", "/w/.devcontainer/compose.yaml",
+		"--file", "/w/.devcontainer/telemetry.dev.yaml",
+		"restart", "workspace",
+	}, ComposeRestartArgs(spec, "p", false))
+
+	// --all with RunServices restarts exactly those services.
+	spec.Compose.RunServices = []string{"workspace", "db"}
+	all := ComposeRestartArgs(spec, "p", true)
+	assert.Equal(t, "restart", all[len(all)-3])
+	assert.Equal(t, []string{"workspace", "db"}, all[len(all)-2:])
+
+	// --all with no RunServices restarts everything (no service args).
+	spec.Compose.RunServices = nil
+	assert.Equal(t, "restart", ComposeRestartArgs(spec, "p", true)[len(ComposeRestartArgs(spec, "p", true))-1])
+}
+
 func TestComposeLogsArgs(t *testing.T) {
 	spec := composeSpec()
 	args := ComposeLogsArgs(spec, "p", true, "db")

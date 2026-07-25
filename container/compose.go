@@ -66,6 +66,18 @@ func ComposeStopArgs(spec *config.Spec, project string) []string {
 	return append(baseArgs(spec, project), "stop")
 }
 
+// ComposeRestartArgs constructs `compose -p <project> -f <file> restart [services]`.
+// With all=false only the workspace's attach service is restarted; with all=true
+// the workspace's services are restarted (mirroring up: RunServices, or every
+// service when RunServices is empty).
+func ComposeRestartArgs(spec *config.Spec, project string, all bool) []string {
+	args := append(baseArgs(spec, project), "restart")
+	if all {
+		return append(args, spec.Compose.RunServices...)
+	}
+	return append(args, spec.Compose.Service)
+}
+
 // ComposeLogsArgs constructs `compose -p <project> -f <file> logs [--follow] [service]`.
 func ComposeLogsArgs(spec *config.Spec, project string, follow bool, service string) []string {
 	args := baseArgs(spec, project)

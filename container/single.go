@@ -180,6 +180,12 @@ func Stop(ctx context.Context, r runtime.Runner, name string) error {
 	return err
 }
 
+// Restart restarts a container (starting it if it is stopped).
+func Restart(ctx context.Context, r runtime.Runner, name string) error {
+	_, err := r.Output(ctx, "restart", name)
+	return err
+}
+
 // Remove force-removes a container (ignoring absence).
 func Remove(ctx context.Context, r runtime.Runner, name string) error {
 	_, err := r.Output(ctx, "rm", "--force", name)

@@ -72,6 +72,7 @@ Because the binary runs inside an arbitrary image, it **must** be built static
 | `devc up`                        | build/start, inject the agent, run hooks, write ssh config. Flags: `--recreate`, `--rebuild`, `--skip-hooks`, `--rerun-hooks`         |
 | `devc down`                      | remove the container(s). `--volumes` (compose), `--purge` (also drop keys, ssh block, control dir), `--auto` (honor `shutdownAction`) |
 | `devc stop`                      | stop without removing                                                                                                                 |
+| `devc restart [--all]`           | restart the main service (compose: just the attach service; `--all` restarts every service)                                           |
 | `devc status [--json]`           | this workspace: kind, runtime, state, ports, config drift                                                                             |
 | `devc list [--json]`             | every devc workspace on the host (found by label)                                                                                     |
 | `devc logs [--follow] [service]` | container / compose logs                                                                                                              |

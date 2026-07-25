@@ -112,6 +112,50 @@ func runStop(args []string) error {
 	return container.Stop(ctx, e.runner, name)
 }
 
+func runRestart(args []string) error {
+	fs := flag.NewFlagSet("restart", flag.ContinueOnError)
+	var cf commonFlags
+	cf.register(fs)
+	all := fs.Bool("all", false, "compose: restart all of the workspace's services, not just the main one")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ctx := context.Background()
+	e, err := setup(ctx, &cf)
+	if err != nil {
+		return err
+	}
+
+	if e.spec.Kind == config.KindCompose {
+		comp, err := e.composeImpl(ctx)
+		if err != nil {
+			return err
+		}
+		project := container.ProjectName(e.spec)
+		if *all {
+			fmt.Printf("restarting compose project %q...\n", project)
+		} else {
+			fmt.Printf("restarting service %q in compose project %q...\n", e.spec.Compose.Service, project)
+		}
+		io := runtime.IO{Stdout: os.Stdout, Stderr: os.Stderr}
+		return comp.Run(ctx, container.ComposeRestartArgs(e.spec, project, *all), io)
+	}
+
+	if *all {
+		fmt.Fprintln(os.Stderr, "warning: --all only applies to compose workspaces; restarting the container")
+	}
+	name := container.ContainerName(e.spec)
+	existing, err := container.Find(ctx, e.runner, name)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return fmt.Errorf("workspace %q is not created", e.spec.Name)
+	}
+	fmt.Printf("restarting %q...\n", e.spec.Name)
+	return container.Restart(ctx, e.runner, name)
+}
+
 // statusReport is the machine-readable form of `devc status` (--json).
 type statusReport struct {
 	Name        string `json:"name"`
