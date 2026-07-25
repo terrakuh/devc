@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/terrakuh/devc/config"
-	"github.com/terrakuh/devc/runtime"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/terrakuh/devc/config"
+	"github.com/terrakuh/devc/runtime"
 )
 
 func shell(s string) config.Command { return config.Command{Kind: config.CommandShell, Shell: s} }

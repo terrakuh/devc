@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/terrakuh/devc/config"
 	"github.com/terrakuh/devc/container"
@@ -16,6 +18,7 @@ import (
 // commonFlags holds the flags shared by the container-touching commands.
 type commonFlags struct {
 	path       string
+	name       string
 	configFile string
 	runtime    string
 	composeCmd string
@@ -31,6 +34,8 @@ type commonFlags struct {
 
 func (c *commonFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&c.path, "path", ".", "project directory or path to a devcontainer.json")
+	fs.StringVar(&c.name, "name", "", "target a workspace by its `devc list` name instead of --path")
+	fs.StringVar(&c.name, "n", "", "shorthand for --name")
 	fs.StringVar(&c.configFile, "config", "", "explicit devcontainer.json to use")
 	fs.StringVar(&c.runtime, "runtime", "", "container runtime: podman or docker (default: autodetect)")
 	fs.StringVar(&c.composeCmd, "compose-cmd", "", `compose command, e.g. "podman compose" (default: autodetect)`)
@@ -95,7 +100,24 @@ func (e *env) effectiveEnv() map[string]string {
 
 // setup resolves the spec, selects the runtime, and computes create options.
 func setup(ctx context.Context, c *commonFlags) (*env, error) {
-	spec, warns, err := config.LoadSpec(c.path, c.configFile)
+	runner, err := runtime.Detect(c.runtime)
+	if err != nil {
+		return nil, err
+	}
+
+	// -n/--name selects a workspace by its `devc list` name; resolve it to the
+	// local folder (via container labels) and load config from there.
+	path := c.path
+	if c.name != "" {
+		if c.configFile != "" {
+			return nil, fmt.Errorf("--config cannot be combined with -n/--name")
+		}
+		if path, err = workspaceFolderByName(ctx, runner, c.name); err != nil {
+			return nil, err
+		}
+	}
+
+	spec, warns, err := config.LoadSpec(path, c.configFile)
 	if err != nil {
 		return nil, err
 	}
@@ -111,16 +133,51 @@ func setup(ctx context.Context, c *commonFlags) (*env, error) {
 		spec.Credentials.SyncGitConfig = c.syncGitConfig.val
 	}
 
-	runner, err := runtime.Detect(c.runtime)
-	if err != nil {
-		return nil, err
-	}
-
 	opts := container.CreateOptions{
 		Userns:       c.userns, // empty unless the user asks; see resolveUserns note
 		SELinuxLabel: resolveSELinux(c.selinux),
 	}
 	return &env{spec: spec, runner: runner, create: opts, flags: c, warns: warns}, nil
+}
+
+// workspaceFolderByName resolves a `devc list` name (or id) to its local
+// workspace folder using container labels, so a command can target a workspace
+// from any directory.
+func workspaceFolderByName(ctx context.Context, r runtime.Runner, name string) (string, error) {
+	infos, err := container.List(ctx, r)
+	if err != nil {
+		return "", err
+	}
+	return selectWorkspaceFolder(infos, name)
+}
+
+// selectWorkspaceFolder picks the local folder whose container matches name by
+// devc name or id label. It errors when nothing matches or when the name maps to
+// more than one folder (two checkouts sharing a name).
+func selectWorkspaceFolder(infos []*container.Info, name string) (string, error) {
+	folders := map[string]bool{}
+	for _, info := range infos {
+		labels := info.Config.Labels
+		if labels[container.LabelName] == name || labels[container.LabelID] == name {
+			if f := labels[container.LabelLocal]; f != "" {
+				folders[f] = true
+			}
+		}
+	}
+	switch len(folders) {
+	case 0:
+		return "", fmt.Errorf("no workspace named %q (see `devc list`)", name)
+	case 1:
+		for f := range folders {
+			return f, nil
+		}
+	}
+	list := make([]string, 0, len(folders))
+	for f := range folders {
+		list = append(list, f)
+	}
+	sort.Strings(list)
+	return "", fmt.Errorf("workspace name %q is ambiguous across %s; use --path", name, strings.Join(list, ", "))
 }
 
 // resolveUserns note: devc does NOT default to --userns=keep-id. Under plain

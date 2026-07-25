@@ -84,9 +84,15 @@ Because the binary runs inside an arbitrary image, it **must** be built static
 | `devc doctor [--json]`           | preflight: runtime, container, `tar`/`curl`, libc, `$HOME`, disk, agent                                                               |
 | `devc config [--raw]`            | print the resolved `Spec` (or the post-substitution raw doc)                                                                          |
 
-Global flags: `--path`, `--config`, `--runtime`, `--compose-cmd`, `--platform`,
-`--selinux`, `--userns`, `-q`, `--forward-agent`, `--sync-git-config` (the last
-two override the matching `customizations.devc.credentials` keys).
+Global flags: `--path`, `-n`/`--name`, `--config`, `--runtime`, `--compose-cmd`,
+`--platform`, `--selinux`, `--userns`, `-q`, `--forward-agent`,
+`--sync-git-config` (the last two override the matching
+`customizations.devc.credentials` keys).
+
+`-n`/`--name` targets a workspace by its `devc list` name (or id) instead of a
+folder, so you can run e.g. `devc code -n shop` or `devc stop -n api` from
+anywhere. It resolves the workspace via container labels, so it works for any
+workspace that still has a container (running or stopped).
 
 ---
 
