@@ -86,19 +86,19 @@ func writeSSHConfig(e *env, keySet *keys.Set, dir *state.Dir, devcBin string) er
 		ForwardAgent:   e.spec.Credentials.ForwardAgent,
 	})
 
-	confPath := devcSSHConfigPath()
+	confPath := devcSSHConfigPath(e.spec.ID)
 	if err := sshconf.WriteWorkspaceConfig(confPath, sshconf.File(block)); err != nil {
 		return err
 	}
 	if e.flags.quiet {
 		return nil
 	}
-	changed, err := sshconf.EnsureInclude(userSSHConfigPath(), confPath)
+	changed, err := sshconf.EnsureInclude(userSSHConfigPath(), devcSSHIncludeGlob())
 	if err != nil {
 		return err
 	}
 	if changed {
-		fmt.Fprintf(os.Stderr, "devc: added `Include %s` to %s\n", confPath, userSSHConfigPath())
+		fmt.Fprintf(os.Stderr, "devc: added `Include %s` to %s\n", devcSSHIncludeGlob(), userSSHConfigPath())
 	}
 	return nil
 }
@@ -136,14 +136,26 @@ func removeControlDir(id string) error {
 	return nil
 }
 
-// devcSSHConfigPath is ~/.config/devc/ssh.config (or under XDG_CONFIG_HOME).
-func devcSSHConfigPath() string {
+// devcSSHConfigDir is ~/.config/devc/ssh.config.d (or under XDG_CONFIG_HOME).
+// Each workspace owns one file inside it.
+func devcSSHConfigDir() string {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
 		home, _ := os.UserHomeDir()
 		base = filepath.Join(home, ".config")
 	}
-	return filepath.Join(base, "devc", "ssh.config")
+	return filepath.Join(base, "devc", "ssh.config.d")
+}
+
+// devcSSHConfigPath is the per-workspace ssh config file for id.
+func devcSSHConfigPath(id string) string {
+	return filepath.Join(devcSSHConfigDir(), id+".config")
+}
+
+// devcSSHIncludeGlob is the single Include directive placed in ~/.ssh/config: a
+// glob over the per-workspace directory so every workspace's file is picked up.
+func devcSSHIncludeGlob() string {
+	return filepath.Join(devcSSHConfigDir(), "*.config")
 }
 
 func userSSHConfigPath() string {

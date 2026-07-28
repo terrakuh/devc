@@ -144,7 +144,7 @@ func setup(ctx context.Context, c *commonFlags) (*env, error) {
 // workspace folder using container labels, so a command can target a workspace
 // from any directory.
 func workspaceFolderByName(ctx context.Context, r runtime.Runner, name string) (string, error) {
-	infos, err := container.List(ctx, r)
+	infos, err := listWorkspaces(ctx, r)
 	if err != nil {
 		return "", err
 	}
@@ -156,9 +156,11 @@ func workspaceFolderByName(ctx context.Context, r runtime.Runner, name string) (
 // more than one folder (two checkouts sharing a name).
 func selectWorkspaceFolder(infos []*container.Info, name string) (string, error) {
 	folders := map[string]bool{}
+	matched := false
 	for _, info := range infos {
 		labels := info.Config.Labels
 		if labels[container.LabelName] == name || labels[container.LabelID] == name {
+			matched = true
 			if f := labels[container.LabelLocal]; f != "" {
 				folders[f] = true
 			}
@@ -166,6 +168,12 @@ func selectWorkspaceFolder(infos []*container.Info, name string) (string, error)
 	}
 	switch len(folders) {
 	case 0:
+		// Distinguish "no such workspace" from "found it, but nothing records
+		// where it lives" - the latter happens for a compose workspace brought up
+		// by a devc that did not yet persist its folder.
+		if matched {
+			return "", fmt.Errorf("workspace %q has no recorded folder; use --path, or run `devc up --path <folder>` once to record it", name)
+		}
 		return "", fmt.Errorf("no workspace named %q (see `devc list`)", name)
 	case 1:
 		for f := range folders {

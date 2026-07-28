@@ -19,16 +19,37 @@ import (
 	"path/filepath"
 )
 
-// State is the persisted per-workspace record: the container identity, which
-// hooks have run, the cached env probe, and the injected agent version.
+// State is the persisted per-workspace record: the workspace's identity and
+// origin, the container identity, which hooks have run, the cached env probe,
+// and the injected agent version.
+//
+// Name and LocalFolder duplicate what a single container carries as devc labels.
+// They are recorded here because compose creates the service containers itself
+// and devc cannot label them, so for a compose workspace this is the only place
+// the display name and originating folder survive - `devc list` and -n/--name
+// read them back from here.
 type State struct {
 	ID             string            `json:"id"`
+	Name           string            `json:"name,omitempty"`
+	LocalFolder    string            `json:"localWorkspaceFolder,omitempty"`
 	ContainerID    string            `json:"containerID,omitempty"`
 	ComposeProject string            `json:"composeProject,omitempty"`
 	ConfigHash     string            `json:"configHash,omitempty"`
 	Hooks          map[string]string `json:"hooks,omitempty"` // hook name -> RFC3339 timestamp
 	EnvProbe       map[string]string `json:"envProbe,omitempty"`
 	AgentVersion   string            `json:"agentVersion,omitempty"`
+}
+
+// Peek reads a workspace's state without creating its directory, for read-only
+// callers (list, -n/--name) that must not conjure state dirs for ids they are
+// merely inspecting. A workspace with no state yet yields a zero State.
+func Peek(id string) (*State, error) {
+	base, err := dataHome()
+	if err != nil {
+		return nil, err
+	}
+	d := &Dir{Root: filepath.Join(base, "devc", id)}
+	return d.Load()
 }
 
 // Dir is a workspace's state directory.

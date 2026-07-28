@@ -18,6 +18,9 @@ const (
 	LabelComposeService = "com.docker.compose.service"
 )
 
+// projectPrefix is the fixed prefix of a devc-derived compose project name.
+const projectPrefix = "devc-"
+
 // ProjectName returns the compose project name for a workspace. A user-set
 // COMPOSE_PROJECT_NAME wins (compose itself would honour it, so devc must agree
 // to find the containers); otherwise it is derived from the workspace id.
@@ -25,7 +28,21 @@ func ProjectName(spec *config.Spec) string {
 	if p := os.Getenv("COMPOSE_PROJECT_NAME"); p != "" {
 		return p
 	}
-	return "devc-" + spec.ID
+	return projectPrefix + spec.ID
+}
+
+// WorkspaceIDFromProject recovers the workspace id from a compose project name
+// that ProjectName produced (devc-<id>), reporting false for any project not
+// named that way. It is the inverse used by List to attribute compose service
+// containers - which never carry devc's own labels - back to a workspace.
+// Projects created under a user-set COMPOSE_PROJECT_NAME are not recognized,
+// matching ProjectName: devc can only find what it named deterministically.
+func WorkspaceIDFromProject(project string) (string, bool) {
+	id, ok := strings.CutPrefix(project, projectPrefix)
+	if !ok || id == "" {
+		return "", false
+	}
+	return id, true
 }
 
 // fileFlags renders the -f flags for a compose spec's files, in overlay order.

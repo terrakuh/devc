@@ -7,7 +7,7 @@ abstraction, features, or cloud. It is a standalone tool.
 
 ```shell
 cd ~/src/myproject
-devc up      # build/start, then write ~/.config/devc/ssh.config
+devc up      # build/start, then write ~/.config/devc/ssh.config.d/<id>.config
              # now: ssh devc.myproject  (or point Remote-SSH at devc.myproject)
 devc down    # remove the container(s)
 ```
@@ -93,7 +93,8 @@ Global flags: `--path`, `-n`/`--name`, `--config`, `--runtime`, `--compose-cmd`,
 `-n`/`--name` targets a workspace by its `devc list` name (or id) instead of a
 folder, so you can run e.g. `devc code -n shop` or `devc stop -n api` from
 anywhere. It resolves the workspace via container labels, so it works for any
-workspace that still has a container (running or stopped).
+workspace that still has a container (running or stopped). Compose workspaces
+resolve too, but only once `devc up` has recorded them (see below).
 
 ---
 
@@ -193,13 +194,21 @@ Per workspace, under `~/.local/share/devc/<id>/` (0700):
 | `id_ed25519`(`.pub`) | client key; the public half is the container's authorized key          |
 | `host_key`(`.pub`)   | the agent's host key (the only private half copied into the container) |
 | `known_hosts`        | pinned, so `StrictHostKeyChecking yes` is honest                       |
-| `state.json`         | container identity, hook records, probed env, agent version            |
+| `state.json`         | workspace name/folder, container identity, hooks, probed env, agent    |
+
+`devc list` finds single-container workspaces by devc's own labels, and compose
+workspaces by their `devc-<id>` project label - compose creates those containers
+itself, so devc cannot label them, and their name and folder are read back from
+`state.json` instead. A compose workspace therefore shows a blank folder (and is
+not addressable by `-n`/`--name`) until the first `devc up` records it.
 
 The SSH ControlMaster socket lives under `/tmp/devc-<uid>/<id>/`. This short path
 matters: the state dir is too deep for the ~104-char Unix socket limit, which
-would silently break connection multiplexing. `~/.ssh/config` gets one idempotent
-`Include ~/.config/devc/ssh.config` line (with a timestamped backup on first
-write).
+would silently break connection multiplexing. Each workspace writes its own
+`~/.config/devc/ssh.config.d/<id>.config`, and `~/.ssh/config` gets one
+idempotent `Include ~/.config/devc/ssh.config.d/*.config` line (with a
+timestamped backup on first write) - so bringing up one workspace never
+overwrites another's Host block.
 
 The workspace id is `<slug>-<sha256(abs folder)[:8]>`: stable across rebuilds and
 unique across two checkouts of the same repo.

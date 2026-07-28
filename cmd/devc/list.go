@@ -10,6 +10,7 @@ import (
 
 	"github.com/terrakuh/devc/container"
 	"github.com/terrakuh/devc/runtime"
+	"github.com/terrakuh/devc/state"
 )
 
 // workspaceRow is one line of `devc list` (also the --json element).
@@ -36,7 +37,7 @@ func runList(args []string) error {
 	if err != nil {
 		return err
 	}
-	infos, err := container.List(ctx, r)
+	infos, err := listWorkspaces(ctx, r)
 	if err != nil {
 		return err
 	}
@@ -61,6 +62,50 @@ func runList(args []string) error {
 	}
 	printWorkspaceRows(rows)
 	return nil
+}
+
+// listWorkspaces enumerates every workspace devc created, backfilling the facts
+// a compose workspace's containers cannot carry: compose creates them, so they
+// have no devc name/folder label and container.List can only recover the id. The
+// values `up` recorded in the workspace state dir stand in, which is what makes
+// a compose workspace show its folder here and be addressable by -n/--name.
+// Labels are never overwritten: a live container is the better source.
+func listWorkspaces(ctx context.Context, r runtime.Runner) ([]*container.Info, error) {
+	infos, err := container.List(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	for _, info := range infos {
+		backfillFromState(info)
+	}
+	return infos, nil
+}
+
+// backfillFromState fills an Info's missing devc name/folder labels from the
+// workspace's state dir. Best-effort: an unreadable or absent state file just
+// leaves the name derived from the id and the folder blank, so a workspace whose
+// state predates this bookkeeping still lists (it regains its folder on the next
+// `devc up`).
+func backfillFromState(info *container.Info) {
+	labels := info.Config.Labels
+	id := labels[container.LabelID]
+	if id == "" || (labels[container.LabelName] != "" && labels[container.LabelLocal] != "") {
+		return
+	}
+	s, err := state.Peek(id)
+	if err != nil {
+		s = nil
+	}
+	if labels[container.LabelName] == "" {
+		if s != nil && s.Name != "" {
+			labels[container.LabelName] = s.Name
+		} else {
+			labels[container.LabelName] = container.NameFromID(id)
+		}
+	}
+	if labels[container.LabelLocal] == "" && s != nil {
+		labels[container.LabelLocal] = s.LocalFolder
+	}
 }
 
 // containerState is the display state for a container Info.

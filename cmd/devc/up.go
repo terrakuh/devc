@@ -114,6 +114,8 @@ func persistCompose(e *env, project string) error {
 		return err
 	}
 	s.ID = e.spec.ID
+	s.Name = e.spec.Name
+	s.LocalFolder = e.spec.LocalWorkspaceFolder
 	s.ConfigHash = container.ConfigHash(e.spec)
 	s.ComposeProject = project
 	// s.ContainerID is owned by the hook/probe logic; see persist().
@@ -214,6 +216,8 @@ func persist(e *env) error {
 		return err
 	}
 	s.ID = e.spec.ID
+	s.Name = e.spec.Name
+	s.LocalFolder = e.spec.LocalWorkspaceFolder
 	s.ConfigHash = container.ConfigHash(e.spec)
 	return dir.Save(s)
 }

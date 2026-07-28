@@ -10,6 +10,7 @@ import (
 	"github.com/terrakuh/devc/config"
 	"github.com/terrakuh/devc/container"
 	"github.com/terrakuh/devc/runtime"
+	"github.com/terrakuh/devc/sshconf"
 	"github.com/terrakuh/devc/state"
 )
 
@@ -70,6 +71,9 @@ func runDown(args []string) error {
 		}
 		if err := removeControlDir(e.spec.ID); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not remove control socket dir: %v\n", err)
+		}
+		if err := sshconf.RemoveWorkspaceConfig(devcSSHConfigPath(e.spec.ID)); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not remove ssh config: %v\n", err)
 		}
 	}
 	return nil

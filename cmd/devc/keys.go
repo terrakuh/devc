@@ -120,17 +120,17 @@ func runSSHConfig(args []string) error {
 		fmt.Print(content)
 		return nil
 	}
-	confPath := devcSSHConfigPath()
+	confPath := devcSSHConfigPath(spec.ID)
 	if err := sshconf.WriteWorkspaceConfig(confPath, content); err != nil {
 		return err
 	}
-	changed, err := sshconf.EnsureInclude(userSSHConfigPath(), confPath)
+	changed, err := sshconf.EnsureInclude(userSSHConfigPath(), devcSSHIncludeGlob())
 	if err != nil {
 		return err
 	}
 	fmt.Printf("wrote %s\n", confPath)
 	if changed {
-		fmt.Printf("added `Include %s` to %s\n", confPath, userSSHConfigPath())
+		fmt.Printf("added `Include %s` to %s\n", devcSSHIncludeGlob(), userSSHConfigPath())
 	}
 	return nil
 }

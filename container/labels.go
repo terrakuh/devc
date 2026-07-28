@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"regexp"
 
 	"github.com/terrakuh/devc/config"
 )
@@ -23,6 +24,18 @@ const (
 
 // ContainerName is the deterministic container name for a workspace.
 func ContainerName(spec *config.Spec) string { return "devc-" + spec.ID }
+
+// idHashSuffix matches the trailing -<8 hex> that config.WorkspaceID appends to
+// a workspace name to form its id.
+var idHashSuffix = regexp.MustCompile(`-[0-9a-f]{8}$`)
+
+// NameFromID recovers a workspace's display name (the slug) from its id, undoing
+// the "<slug>-<sha256(folder)[:8]>" scheme. Used for compose service containers,
+// which carry no devc name label of their own. An id that does not match the
+// scheme is returned unchanged.
+func NameFromID(id string) string {
+	return idHashSuffix.ReplaceAllString(id, "")
+}
 
 // Labels returns the label set for a workspace's container.
 func Labels(spec *config.Spec) map[string]string {

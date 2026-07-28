@@ -31,6 +31,20 @@ func TestProjectName(t *testing.T) {
 	assert.Equal(t, "custom", ProjectName(spec), "COMPOSE_PROJECT_NAME must win")
 }
 
+func TestWorkspaceIDFromProject(t *testing.T) {
+	// Round-trips ProjectName's default form, including hyphenated names.
+	id, ok := WorkspaceIDFromProject("devc-my-shop-c52ddf65")
+	assert.True(t, ok)
+	assert.Equal(t, "my-shop-c52ddf65", id)
+	assert.Equal(t, "my-shop", NameFromID(id))
+
+	// A project not named by devc (e.g. a user COMPOSE_PROJECT_NAME) is rejected.
+	_, ok = WorkspaceIDFromProject("custom")
+	assert.False(t, ok)
+	_, ok = WorkspaceIDFromProject("devc-")
+	assert.False(t, ok)
+}
+
 func TestComposeUpArgs(t *testing.T) {
 	spec := composeSpec()
 	args := ComposeUpArgs(spec, "devc-shop-c52ddf65")

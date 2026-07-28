@@ -53,12 +53,66 @@ func Find(ctx context.Context, r runtime.Runner, name string) (*Info, error) {
 	return &info, nil
 }
 
-// List returns the Info for every container devc created (single-container and
-// compose alike), found by the devc id label. The list is best-effort: a
+// List returns one Info per workspace devc created, single-container and compose
+// alike. Single-container workspaces carry devc's own id label and are found
+// directly. Compose service containers are created by compose, not devc, so they
+// never carry that label; they are found by their deterministic devc-<id>
+// compose project label instead, and a project's several service containers are
+// collapsed into one synthesized workspace row carrying only the id label. The
+// list is best-effort: a
 // container that disappears between the `ps` and its `inspect` is skipped rather
 // than failing the whole enumeration.
 func List(ctx context.Context, r runtime.Runner) ([]*Info, error) {
-	out, err := r.Output(ctx, "ps", "--all", "--filter", "label="+LabelID, "--format", "{{.ID}}")
+	var infos []*Info
+
+	single, err := listByLabel(ctx, r, LabelID)
+	if err != nil {
+		return nil, err
+	}
+	infos = append(infos, single...)
+
+	composeContainers, err := listByLabel(ctx, r, LabelComposeProject)
+	if err != nil {
+		return nil, err
+	}
+	// Collapse each devc compose project's service containers into a single row,
+	// keyed by workspace id. The row reports "running" when any service is up.
+	byID := map[string]*Info{}
+	for _, c := range composeContainers {
+		id, ok := WorkspaceIDFromProject(c.Config.Labels[LabelComposeProject])
+		if !ok {
+			continue // project not created by devc (e.g. a user COMPOSE_PROJECT_NAME)
+		}
+		if row, seen := byID[id]; seen {
+			if c.Running() && !row.Running() {
+				row.State = c.State
+			}
+			continue
+		}
+		row := composeRow(id, c)
+		byID[id] = row
+		infos = append(infos, row)
+	}
+	return infos, nil
+}
+
+// composeRow synthesizes the workspace row for a compose service container. Only
+// the id label can be recovered from the container itself (from its project
+// name); the display name and the local folder are devc facts compose never
+// stored, so callers backfill them - see cmd/devc's listWorkspaces, which reads
+// them from the workspace state dir and falls back to NameFromID.
+func composeRow(id string, c *Info) *Info {
+	return &Info{
+		ID:     c.ID,
+		State:  c.State,
+		Config: ContainerConfig{Labels: map[string]string{LabelID: id}},
+	}
+}
+
+// listByLabel returns the Info for every container carrying the given label key,
+// skipping any that vanish between the `ps` and their `inspect`.
+func listByLabel(ctx context.Context, r runtime.Runner, label string) ([]*Info, error) {
+	out, err := r.Output(ctx, "ps", "--all", "--filter", "label="+label, "--format", "{{.ID}}")
 	if err != nil {
 		return nil, err
 	}
