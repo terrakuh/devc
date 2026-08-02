@@ -23,7 +23,7 @@ func runUp(args []string) error {
 	var cf commonFlags
 	cf.register(fs)
 	recreate := fs.Bool("recreate", false, "remove and recreate the container even if it exists")
-	rebuild := fs.Bool("rebuild", false, "rebuild the image before (re)creating the container")
+	rebuild := fs.Bool("rebuild", false, "rebuild the image and recreate the container (implies --recreate)")
 	hf := hookFlags{}
 	fs.BoolVar(&hf.skip, "skip-hooks", false, "do not run lifecycle hooks")
 	fs.BoolVar(&hf.rerun, "rerun-hooks", false, "re-run create hooks even if already run for this container")
@@ -45,7 +45,7 @@ func runUp(args []string) error {
 	}
 
 	if e.spec.Kind == config.KindCompose {
-		return upCompose(ctx, e, hf)
+		return upCompose(ctx, e, *recreate, *rebuild, hf)
 	}
 	return upSingle(ctx, e, *recreate, *rebuild, hf)
 }
@@ -71,8 +71,10 @@ func postUp(ctx context.Context, e *env, ref, containerID string, hf hookFlags) 
 }
 
 // upCompose brings the workspace's compose project up (detached) and locates
-// the attach service.
-func upCompose(ctx context.Context, e *env, hf hookFlags) error {
+// the attach service. rebuild rebuilds the service images first; recreate
+// forces the containers to be replaced even when compose considers them
+// up-to-date (a rebuild implies a recreate, see ComposeUpArgs).
+func upCompose(ctx context.Context, e *env, recreate, rebuild bool, hf hookFlags) error {
 	comp, err := e.composeImpl(ctx)
 	if err != nil {
 		return err
@@ -81,7 +83,7 @@ func upCompose(ctx context.Context, e *env, hf hookFlags) error {
 	io := runtime.IO{Stdout: os.Stdout, Stderr: os.Stderr}
 
 	fmt.Printf("bringing up compose project %q (%s)...\n", project, comp.Label)
-	if err := container.ComposeUp(ctx, comp, e.spec, project, io); err != nil {
+	if err := container.ComposeUp(ctx, comp, e.spec, project, rebuild, recreate, io); err != nil {
 		return err
 	}
 
@@ -131,7 +133,17 @@ func upSingle(ctx context.Context, e *env, recreate, rebuild bool, hf hookFlags)
 	if err != nil {
 		return err
 	}
+
+	// --rebuild implies --recreate: a rebuilt image only takes effect once the
+	// container backed by it is replaced (createFresh rebuilds on recreate).
+	recreate = recreate || rebuild
+
 	action := container.Decide(existing, e.spec, recreate)
+	// Decide only recreates on config drift; an explicit --recreate/--rebuild
+	// must replace an up-to-date container too.
+	if recreate && existing != nil {
+		action = container.ActionRecreate
+	}
 
 	switch action {
 	case container.ActionAttach:

@@ -115,7 +115,7 @@ func ensureUp(ctx context.Context, e *env) error {
 	defer func() { os.Stdout = stdout }()
 
 	if e.spec.Kind == config.KindCompose {
-		return upCompose(ctx, e, hookFlags{})
+		return upCompose(ctx, e, false, false, hookFlags{})
 	}
 	return upSingle(ctx, e, false, false, hookFlags{})
 }

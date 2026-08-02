@@ -60,10 +60,21 @@ func baseArgs(spec *config.Spec, project string) []string {
 	return append(args, fileFlags(spec)...)
 }
 
-// ComposeUpArgs constructs `compose -p <project> -f <file> up -d [services]`.
-func ComposeUpArgs(spec *config.Spec, project string) []string {
+// ComposeUpArgs constructs `compose -p <project> -f <file> up -d [--build]
+// [--force-recreate] [services]`. rebuild adds --build so the image is rebuilt
+// from source; recreate adds --force-recreate so the container is replaced even
+// when compose considers it up-to-date. A rebuild implies a recreate: a running
+// container keeps its old image until it is recreated, so a bare --build would
+// rebuild the image but leave the stale container in place.
+func ComposeUpArgs(spec *config.Spec, project string, rebuild, recreate bool) []string {
 	args := baseArgs(spec, project)
 	args = append(args, "up", "--detach")
+	if rebuild {
+		args = append(args, "--build")
+	}
+	if recreate || rebuild {
+		args = append(args, "--force-recreate")
+	}
 	args = append(args, spec.Compose.RunServices...)
 	return args
 }
@@ -108,9 +119,11 @@ func ComposeLogsArgs(spec *config.Spec, project string, follow bool, service str
 	return args
 }
 
-// ComposeUp brings the workspace's services up (detached).
-func ComposeUp(ctx context.Context, c *runtime.Compose, spec *config.Spec, project string, io runtime.IO) error {
-	return c.Run(ctx, ComposeUpArgs(spec, project), io)
+// ComposeUp brings the workspace's services up (detached). rebuild rebuilds the
+// service images before (re)creating; recreate forces the containers to be
+// replaced even when compose considers them up-to-date.
+func ComposeUp(ctx context.Context, c *runtime.Compose, spec *config.Spec, project string, rebuild, recreate bool, io runtime.IO) error {
+	return c.Run(ctx, ComposeUpArgs(spec, project, rebuild, recreate), io)
 }
 
 // ComposeDown tears the project down.

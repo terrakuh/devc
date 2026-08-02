@@ -47,7 +47,7 @@ func TestWorkspaceIDFromProject(t *testing.T) {
 
 func TestComposeUpArgs(t *testing.T) {
 	spec := composeSpec()
-	args := ComposeUpArgs(spec, "devc-shop-c52ddf65")
+	args := ComposeUpArgs(spec, "devc-shop-c52ddf65", false, false)
 
 	// project name and both files, files in overlay order, before the verb.
 	assert.Equal(t, []string{
@@ -58,10 +58,24 @@ func TestComposeUpArgs(t *testing.T) {
 	}, args)
 }
 
+func TestComposeUpArgsRebuild(t *testing.T) {
+	spec := composeSpec()
+
+	// --rebuild adds --build and, because a rebuild implies a recreate,
+	// --force-recreate as well.
+	rebuilt := ComposeUpArgs(spec, "p", true, false)
+	assert.Equal(t, []string{"up", "--detach", "--build", "--force-recreate"}, rebuilt[len(rebuilt)-4:])
+
+	// --recreate alone forces recreation without rebuilding the image.
+	recreated := ComposeUpArgs(spec, "p", false, true)
+	assert.Equal(t, []string{"up", "--detach", "--force-recreate"}, recreated[len(recreated)-3:])
+	assert.NotContains(t, recreated, "--build")
+}
+
 func TestComposeUpArgsRunServices(t *testing.T) {
 	spec := composeSpec()
 	spec.Compose.RunServices = []string{"workspace", "db"}
-	args := ComposeUpArgs(spec, "p")
+	args := ComposeUpArgs(spec, "p", false, false)
 	assert.Equal(t, []string{"workspace", "db"}, args[len(args)-2:])
 }
 
