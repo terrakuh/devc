@@ -76,6 +76,11 @@ func runSSHConfig(args []string) error {
 		return err
 	}
 	printWarnings(cf.quiet, warns)
+	// Honor the same credential flag overrides `setup` applies, so the block this
+	// command writes matches what `devc up` would write for the same invocation.
+	if cf.forwardAgent.set {
+		spec.Credentials.ForwardAgent = cf.forwardAgent.val
+	}
 
 	dir, err := state.For(spec.ID)
 	if err != nil {
@@ -113,6 +118,7 @@ func runSSHConfig(args []string) error {
 		KnownHostsFile: set.KnownHosts,
 		ControlDir:     ctlDir,
 		Forwards:       forwards,
+		ForwardAgent:   spec.Credentials.ForwardAgent,
 	})
 	content := sshconf.File(block)
 

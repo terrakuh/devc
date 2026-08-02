@@ -30,10 +30,18 @@ func runDown(args []string) error {
 		return err
 	}
 
-	// --auto respects shutdownAction: 'none' means leave the workspace running.
-	if *auto && e.spec.ShutdownAction == config.ShutdownNone {
-		fmt.Printf("workspace %q has shutdownAction=none; leaving it running\n", e.spec.Name)
-		return nil
+	// --auto honors shutdownAction (used on editor disconnect): 'none' leaves the
+	// workspace running, and the 'stop' actions stop it without removing it - only
+	// an explicit `devc down` (no --auto) tears the container down. Removing a
+	// container the config only asked to stop would discard its filesystem state.
+	if *auto {
+		switch e.spec.ShutdownAction {
+		case config.ShutdownNone:
+			fmt.Printf("workspace %q has shutdownAction=none; leaving it running\n", e.spec.Name)
+			return nil
+		case config.ShutdownStopCtr, config.ShutdownStopCompose:
+			return stopWorkspace(ctx, e)
+		}
 	}
 
 	if e.spec.Kind == config.KindCompose {
@@ -91,7 +99,13 @@ func runStop(args []string) error {
 	if err != nil {
 		return err
 	}
+	return stopWorkspace(ctx, e)
+}
 
+// stopWorkspace stops the workspace without removing it (single container or
+// compose). Shared by `devc stop` and `devc down --auto` under a 'stop'
+// shutdownAction.
+func stopWorkspace(ctx context.Context, e *env) error {
 	if e.spec.Kind == config.KindCompose {
 		comp, err := e.composeImpl(ctx)
 		if err != nil {
