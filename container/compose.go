@@ -143,6 +143,46 @@ func ComposeLogsArgs(spec *config.Spec, project string, follow bool, services []
 	return append(args, services...)
 }
 
+// ComposeConfigArgs constructs `compose -p <project> -f <file> config
+// --services`, which prints the services the compose files declare - including
+// the ones that have no container right now.
+func ComposeConfigArgs(spec *config.Spec, project string) []string {
+	return append(baseArgs(spec, project), "config", "--services")
+}
+
+// ComposeServiceNames returns the services the workspace's compose files
+// declare, in the order compose reports them.
+func ComposeServiceNames(ctx context.Context, c *runtime.Compose, spec *config.Spec, project string) ([]string, error) {
+	out, err := c.Output(ctx, ComposeConfigArgs(spec, project)...)
+	if err != nil {
+		return nil, err
+	}
+	return nonEmptyLines(string(out)), nil
+}
+
+// ListComposeProject returns one Info per container in the project, running or
+// not, sorted by service name (then container id, so a scaled service's
+// containers keep a stable order).
+func ListComposeProject(ctx context.Context, r runtime.Runner, project string) ([]*Info, error) {
+	infos, err := listByLabel(ctx, r, LabelComposeProject+"="+project)
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(infos, func(a, b *Info) int {
+		if c := strings.Compare(ServiceOf(a), ServiceOf(b)); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return infos, nil
+}
+
+// ServiceOf is the compose service a container belongs to, empty for a container
+// compose did not create.
+func ServiceOf(i *Info) string {
+	return i.Config.Labels[LabelComposeService]
+}
+
 // ComposeUp brings the given services up (detached); an empty list means every
 // service in the project. rebuild rebuilds the service images before
 // (re)creating; recreate forces the containers to be replaced even when compose

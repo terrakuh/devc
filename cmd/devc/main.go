@@ -27,6 +27,7 @@ Commands:
   stop        Stop the workspace without removing it
   restart     Restart the workspace's main service (compose: --all for every service)
   status      Show the workspace's state
+  ps          List this workspace's containers (compose: one row per service)
   list        List all devc workspaces on this host
   logs        Show container (or compose) logs
   exec        Run a command inside the workspace container (--service for another one)
@@ -40,7 +41,7 @@ Commands:
 
 Run "devc <command> -h" for command-specific flags.
 
-On a compose workspace, up, down, stop, restart and logs take service names
+On a compose workspace, up, down, stop, restart, logs and ps take service names
 after their flags ("devc restart db cache"); with none they act on the whole
 workspace as before.
 `
@@ -66,6 +67,8 @@ func main() {
 		err = runRestart(args)
 	case "status":
 		err = runStatus(args)
+	case "ps":
+		err = runPs(args)
 	case "list":
 		err = runList(args)
 	case "logs":

@@ -74,6 +74,7 @@ Because the binary runs inside an arbitrary image, it **must** be built static
 | `devc stop [service...]`         | stop without removing                                                                                                                 |
 | `devc restart [--all] [service...]` | restart the main service (compose: just the attach service; `--all` restarts every service)                                        |
 | `devc status [--json]`           | this workspace: kind, runtime, state, ports, config drift                                                                             |
+| `devc ps [--json] [service...]`  | this workspace's containers, one row per compose service (declared-but-absent ones included)                                          |
 | `devc list [--json]`             | every devc workspace on the host (found by label)                                                                                     |
 | `devc logs [--follow] [service...]` | container / compose logs                                                                                                           |
 | `devc exec [-T] [--service <s>] -- <cmd>` | run as the remote user in the workspace folder, with `remoteEnv`                                                             |
@@ -98,17 +99,31 @@ resolve too, but only once `devc up` has recorded them (see below).
 
 ### Targeting single services (compose)
 
-On a compose workspace, `up`, `down`, `stop`, `restart` and `logs` take service
-names after their flags; with none they behave exactly as before and act on the
-whole workspace.
+On a compose workspace, `up`, `down`, `stop`, `restart`, `logs` and `ps` take
+service names after their flags; with none they behave exactly as before and act
+on the whole workspace.
 
 ```sh
+devc ps                    # what this workspace is made of, and what is up
 devc restart db cache      # restart just these two services
 devc up --rebuild db       # rebuild and recreate one service
 devc stop db               # leave the rest of the project running
 devc down db               # stop+remove db's container (compose rm), project stays
 devc logs --follow db api  # follow two services
 devc exec --service db -- psql -U dev   # a shell in a non-workspace service
+```
+
+`devc ps` is the per-workspace counterpart of `devc list`: it lists the project's
+containers by service, rounded out with the services the compose files declare
+but that were never created, and stars the one devc attaches to.
+
+```
+SERVICE     STATE        CONTAINER     IMAGE
+cache       not created  -             -
+db          exited       a1b2c3d4e5f6  postgres:16
+workspace*  running      0f9e8d7c6b5a  fedora:44
+
+* the workspace service devc attaches to
 ```
 
 Because Go's flag parsing stops at the first positional argument, flags have to

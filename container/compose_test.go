@@ -168,6 +168,43 @@ func TestComposeLogsArgs(t *testing.T) {
 	assert.Equal(t, "logs", noSvc[len(noSvc)-1], "no service, no follow => logs is last")
 }
 
+func TestComposeConfigArgs(t *testing.T) {
+	spec := composeSpec()
+	assert.Equal(t, []string{
+		"--project-name", "p",
+		"--file", "/w/.devcontainer/compose.yaml",
+		"--file", "/w/.devcontainer/telemetry.dev.yaml",
+		"config", "--services",
+	}, ComposeConfigArgs(spec, "p"))
+}
+
+func TestListComposeProject(t *testing.T) {
+	f := runtime.NewFake()
+	f.OutputFunc = func(args []string) ([]byte, error) {
+		switch args[0] {
+		case "ps":
+			// The filter pins the project, so another project's containers - and
+			// devc's own single-container workspaces - stay out of the listing.
+			assert.Contains(t, args, "label="+LabelComposeProject+"=p")
+			return []byte("ctr-b\nctr-a\n"), nil
+		case "inspect":
+			svc := map[string]string{"ctr-a": "workspace", "ctr-b": "db"}[args[len(args)-1]]
+			return json.Marshal(Info{
+				ID:     args[len(args)-1],
+				Config: ContainerConfig{Labels: map[string]string{LabelComposeService: svc}},
+			})
+		}
+		return nil, nil
+	}
+
+	infos, err := ListComposeProject(context.Background(), f, "p")
+	require.NoError(t, err)
+	require.Len(t, infos, 2)
+	// Sorted by service name, not by the order `ps` happened to report.
+	assert.Equal(t, "db", ServiceOf(infos[0]))
+	assert.Equal(t, "workspace", ServiceOf(infos[1]))
+}
+
 func TestFindComposeServiceOne(t *testing.T) {
 	f := runtime.NewFake()
 	f.OutputFunc = func(args []string) ([]byte, error) {
