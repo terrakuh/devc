@@ -24,6 +24,8 @@ func runUp(args []string) error {
 	cf.register(fs)
 	recreate := fs.Bool("recreate", false, "remove and recreate the container even if it exists")
 	rebuild := fs.Bool("rebuild", false, "rebuild the image and recreate the container (implies --recreate)")
+	code := fs.Bool("code", false, "open the workspace in VSCodium/VS Code once it is up")
+	editor := fs.String("editor", os.Getenv("DEVC_EDITOR"), "editor launcher for --code (default: codium, else code)")
 	hf := hookFlags{}
 	fs.BoolVar(&hf.skip, "skip-hooks", false, "do not run lifecycle hooks")
 	fs.BoolVar(&hf.rerun, "rerun-hooks", false, "re-run create hooks even if already run for this container")
@@ -45,9 +47,17 @@ func runUp(args []string) error {
 	}
 
 	if e.spec.Kind == config.KindCompose {
-		return upCompose(ctx, e, *recreate, *rebuild, hf)
+		if err := upCompose(ctx, e, *recreate, *rebuild, hf); err != nil {
+			return err
+		}
+	} else if err := upSingle(ctx, e, *recreate, *rebuild, hf); err != nil {
+		return err
 	}
-	return upSingle(ctx, e, *recreate, *rebuild, hf)
+
+	if *code {
+		return launchEditor(e, *editor, cf.quiet)
+	}
+	return nil
 }
 
 // postUp runs the in-container lifecycle: create/start hooks, environment probe,

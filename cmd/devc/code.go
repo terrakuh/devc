@@ -38,13 +38,19 @@ func runCode(args []string) error {
 		return err
 	}
 
-	bin, err := resolveEditor(*editor)
+	return launchEditor(e, *editor, cf.quiet)
+}
+
+// launchEditor opens the workspace in the resolved editor over Remote-SSH. It is
+// shared by `devc code` and `devc up --code`.
+func launchEditor(e *env, editor string, quiet bool) error {
+	bin, err := resolveEditor(editor)
 	if err != nil {
 		return err
 	}
 
 	uri := folderURI(e.spec)
-	if !cf.quiet {
+	if !quiet {
 		fmt.Fprintf(os.Stderr, "opening %s in %s\n", uri, bin)
 	}
 
