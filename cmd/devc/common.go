@@ -255,3 +255,35 @@ func (e *env) attachRef(ctx context.Context) (ref string, info *container.Info, 
 	info, err = container.Find(ctx, e.runner, name)
 	return name, info, err
 }
+
+// serviceRef resolves the container of a specific compose service, for commands
+// that can target something other than the workspace's attach service. An empty
+// service means the attach service, so a flag value can be passed straight
+// through.
+func (e *env) serviceRef(ctx context.Context, service string) (ref string, info *container.Info, err error) {
+	if service == "" {
+		return e.attachRef(ctx)
+	}
+	if e.spec.Kind != config.KindCompose {
+		return "", nil, fmt.Errorf("--service is only meaningful for compose workspaces; %q is a single container", e.spec.Name)
+	}
+	if service == e.spec.Compose.Service {
+		return e.attachRef(ctx)
+	}
+	info, err = container.FindComposeService(ctx, e.runner, container.ProjectName(e.spec), service)
+	if err != nil || info == nil {
+		return "", info, err
+	}
+	return info.ID, info, nil
+}
+
+// composeServices validates the positional service names a compose-aware
+// command was given. Naming services only means something for a compose
+// workspace, where the project has more than one container to pick from.
+func composeServices(e *env, services []string) ([]string, error) {
+	if len(services) > 0 && e.spec.Kind != config.KindCompose {
+		return nil, fmt.Errorf("workspace %q is a single container, so it has no services to name (got %s)",
+			e.spec.Name, strings.Join(services, ", "))
+	}
+	return services, nil
+}

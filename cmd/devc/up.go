@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/terrakuh/devc/config"
 	"github.com/terrakuh/devc/container"
@@ -38,6 +39,10 @@ func runUp(args []string) error {
 	if err != nil {
 		return err
 	}
+	services, err := composeServices(e, fs.Args())
+	if err != nil {
+		return err
+	}
 
 	// initializeCommand runs on the host, before any container work.
 	if !hf.skip {
@@ -46,8 +51,11 @@ func runUp(args []string) error {
 		}
 	}
 
+	// A compose `up` limited to services other than the workspace's own leaves
+	// nothing to attach to, which the editor launch below has to respect.
+	attached := true
 	if e.spec.Kind == config.KindCompose {
-		if err := upCompose(ctx, e, *recreate, *rebuild, hf); err != nil {
+		if attached, err = upCompose(ctx, e, *recreate, *rebuild, services, hf); err != nil {
 			return err
 		}
 	} else if err := upSingle(ctx, e, *recreate, *rebuild, hf); err != nil {
@@ -55,6 +63,10 @@ func runUp(args []string) error {
 	}
 
 	if *code {
+		if !attached {
+			fmt.Fprintf(os.Stderr, "warning: --code needs the workspace service %q, which was not brought up; skipping the editor\n", e.spec.Compose.Service)
+			return nil
+		}
 		return launchEditor(e, *editor, cf.quiet)
 	}
 	return nil
@@ -80,40 +92,58 @@ func postUp(ctx context.Context, e *env, ref, containerID string, hf hookFlags) 
 	return h.runPostAttach(ctx)
 }
 
-// upCompose brings the workspace's compose project up (detached) and locates
-// the attach service. rebuild rebuilds the service images first; recreate
-// forces the containers to be replaced even when compose considers them
-// up-to-date (a rebuild implies a recreate, see ComposeUpArgs).
-func upCompose(ctx context.Context, e *env, recreate, rebuild bool, hf hookFlags) error {
+// upCompose brings the workspace's compose services up (detached) and locates
+// the attach service. services narrows the bring-up to those services, falling
+// back to the config's runServices (empty = every service). rebuild rebuilds the
+// service images first; recreate forces the containers to be replaced even when
+// compose considers them up-to-date (a rebuild implies a recreate, see
+// ComposeUpArgs).
+//
+// It reports whether the workspace's own service was part of the bring-up. When
+// it was not - `devc up db` on a project whose workspace service is `app` - the
+// services still start, but there is no container to provision or hook into, so
+// the workspace lifecycle is skipped rather than run against a stale container.
+func upCompose(ctx context.Context, e *env, recreate, rebuild bool, services []string, hf hookFlags) (bool, error) {
 	comp, err := e.composeImpl(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	project := container.ProjectName(e.spec)
 	io := runtime.IO{Stdout: os.Stdout, Stderr: os.Stderr}
+	targets := container.ComposeTargets(services, e.spec.Compose.RunServices)
 
-	fmt.Printf("bringing up compose project %q (%s)...\n", project, comp.Label)
-	if err := container.ComposeUp(ctx, comp, e.spec, project, rebuild, recreate, io); err != nil {
-		return err
+	if len(services) > 0 {
+		fmt.Printf("bringing up service(s) %s in compose project %q (%s)...\n", strings.Join(services, ", "), project, comp.Label)
+	} else {
+		fmt.Printf("bringing up compose project %q (%s)...\n", project, comp.Label)
+	}
+	if err := container.ComposeUp(ctx, comp, e.spec, project, rebuild, recreate, targets, io); err != nil {
+		return false, err
+	}
+
+	if !container.ComposeCovers(targets, e.spec.Compose.Service) {
+		fmt.Printf("service(s) %s are up; workspace service %q was not requested, so hooks and provisioning were skipped\n",
+			strings.Join(targets, ", "), e.spec.Compose.Service)
+		return false, nil
 	}
 
 	info, err := container.FindComposeService(ctx, e.runner, project, e.spec.Compose.Service)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if info == nil {
-		return fmt.Errorf("compose came up but service %q has no container; check the compose file", e.spec.Compose.Service)
+		return false, fmt.Errorf("compose came up but service %q has no container; check the compose file", e.spec.Compose.Service)
 	}
 	if err := persistCompose(e, project); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not write workspace state: %v\n", err)
 	}
 	if err := postUp(ctx, e, info.ID, info.ID, hf); err != nil {
-		return err
+		return false, err
 	}
 	fmt.Printf("workspace %q is up (service %q, container %s)\n", e.spec.Name, e.spec.Compose.Service, short(info.ID))
 	fmt.Printf("  ssh in:         ssh %s\n", sshAlias(e.spec))
 	fmt.Printf("  run a command:  devc exec --path %s -- <cmd>\n", e.spec.LocalWorkspaceFolder)
-	return nil
+	return true, nil
 }
 
 func persistCompose(e *env, project string) error {

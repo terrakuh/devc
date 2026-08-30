@@ -19,6 +19,7 @@ func runExec(args []string) error {
 	var cf commonFlags
 	cf.register(fs)
 	noTTY := fs.Bool("T", false, "disable TTY allocation even when stdin is a terminal")
+	service := fs.String("service", "", "compose: run in this service's container instead of the workspace's")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -33,16 +34,27 @@ func runExec(args []string) error {
 		return err
 	}
 
-	ref, info, err := e.attachRef(ctx)
+	ref, info, err := e.serviceRef(ctx, *service)
 	if err != nil {
 		return err
 	}
 	if info == nil || !info.Running() {
+		if other := *service; other != "" && other != e.spec.Compose.Service {
+			return fmt.Errorf("service %q is not running; run `devc up %s` first", other, other)
+		}
 		return fmt.Errorf("workspace %q is not running; run `devc up` first", e.spec.Name)
 	}
 
+	// remoteUser, the workspace folder and remoteEnv describe the workspace's own
+	// container; another service has its own user and layout, so the command runs
+	// there plainly, letting the image's defaults apply.
+	user, workdir, env := e.spec.RemoteUser, e.spec.ContainerWorkspaceFolder, e.spec.RemoteEnv
+	if *service != "" && *service != e.spec.Compose.Service {
+		user, workdir, env = "", "", nil
+	}
+
 	tty := !*noTTY && stdinIsTerminal()
-	argv := container.ExecArgs(ref, e.spec.RemoteUser, e.spec.ContainerWorkspaceFolder, e.spec.RemoteEnv, true, tty, cmdArgs)
+	argv := container.ExecArgs(ref, user, workdir, env, true, tty, cmdArgs)
 	io := runtime.IO{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}
 	return e.runner.Run(ctx, argv, io)
 }

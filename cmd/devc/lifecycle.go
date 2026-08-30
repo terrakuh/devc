@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/terrakuh/devc/config"
 	"github.com/terrakuh/devc/container"
@@ -29,6 +30,21 @@ func runDown(args []string) error {
 	if err != nil {
 		return err
 	}
+	services, err := composeServices(e, fs.Args())
+	if err != nil {
+		return err
+	}
+	// --volumes and --purge act on the workspace as a whole (named volumes, keys,
+	// ssh block), so they have no per-service meaning; erroring beats quietly
+	// doing something wider than the named services.
+	if len(services) > 0 {
+		switch {
+		case *volumes:
+			return fmt.Errorf("--volumes removes the project's named volumes and cannot be scoped to services; run `devc down --volumes` for the whole project")
+		case *purge:
+			return fmt.Errorf("--purge removes the whole workspace's host state and cannot be scoped to services; run `devc down --purge` for the whole project")
+		}
+	}
 
 	// --auto honors shutdownAction (used on editor disconnect): 'none' leaves the
 	// workspace running, and the 'stop' actions stop it without removing it - only
@@ -40,7 +56,7 @@ func runDown(args []string) error {
 			fmt.Printf("workspace %q has shutdownAction=none; leaving it running\n", e.spec.Name)
 			return nil
 		case config.ShutdownStopCtr, config.ShutdownStopCompose:
-			return stopWorkspace(ctx, e)
+			return stopWorkspace(ctx, e, services)
 		}
 	}
 
@@ -50,8 +66,14 @@ func runDown(args []string) error {
 			return err
 		}
 		project := container.ProjectName(e.spec)
-		fmt.Printf("tearing down compose project %q...\n", project)
 		io := runtime.IO{Stdout: os.Stdout, Stderr: os.Stderr}
+		// Named services are removed on their own; the project's network and
+		// volumes stay, because the rest of it may still be running.
+		if len(services) > 0 {
+			fmt.Printf("removing service(s) %s in compose project %q...\n", strings.Join(services, ", "), project)
+			return comp.Run(ctx, container.ComposeRemoveArgs(e.spec, project, services), io)
+		}
+		fmt.Printf("tearing down compose project %q...\n", project)
 		if err := container.ComposeDown(ctx, comp, e.spec, project, *volumes, io); err != nil {
 			return err
 		}
@@ -99,22 +121,30 @@ func runStop(args []string) error {
 	if err != nil {
 		return err
 	}
-	return stopWorkspace(ctx, e)
+	services, err := composeServices(e, fs.Args())
+	if err != nil {
+		return err
+	}
+	return stopWorkspace(ctx, e, services)
 }
 
 // stopWorkspace stops the workspace without removing it (single container or
 // compose). Shared by `devc stop` and `devc down --auto` under a 'stop'
-// shutdownAction.
-func stopWorkspace(ctx context.Context, e *env) error {
+// shutdownAction. An empty services list stops the whole workspace.
+func stopWorkspace(ctx context.Context, e *env, services []string) error {
 	if e.spec.Kind == config.KindCompose {
 		comp, err := e.composeImpl(ctx)
 		if err != nil {
 			return err
 		}
 		project := container.ProjectName(e.spec)
-		fmt.Printf("stopping compose project %q...\n", project)
+		if len(services) > 0 {
+			fmt.Printf("stopping service(s) %s in compose project %q...\n", strings.Join(services, ", "), project)
+		} else {
+			fmt.Printf("stopping compose project %q...\n", project)
+		}
 		io := runtime.IO{Stdout: os.Stdout, Stderr: os.Stderr}
-		return comp.Run(ctx, container.ComposeStopArgs(e.spec, project), io)
+		return comp.Run(ctx, container.ComposeStopArgs(e.spec, project, services), io)
 	}
 
 	name := container.ContainerName(e.spec)
@@ -143,6 +173,13 @@ func runRestart(args []string) error {
 	if err != nil {
 		return err
 	}
+	services, err := composeServices(e, fs.Args())
+	if err != nil {
+		return err
+	}
+	if len(services) > 0 && *all {
+		return fmt.Errorf("--all restarts every service, so it cannot be combined with an explicit service list")
+	}
 
 	if e.spec.Kind == config.KindCompose {
 		comp, err := e.composeImpl(ctx)
@@ -150,13 +187,20 @@ func runRestart(args []string) error {
 			return err
 		}
 		project := container.ProjectName(e.spec)
+		// Without an explicit list, restart just the attach service - or, under
+		// --all, the workspace's services (runServices, else everything).
+		fallback := []string{e.spec.Compose.Service}
 		if *all {
+			fallback = e.spec.Compose.RunServices
+		}
+		targets := container.ComposeTargets(services, fallback)
+		if len(targets) == 0 {
 			fmt.Printf("restarting compose project %q...\n", project)
 		} else {
-			fmt.Printf("restarting service %q in compose project %q...\n", e.spec.Compose.Service, project)
+			fmt.Printf("restarting service(s) %s in compose project %q...\n", strings.Join(targets, ", "), project)
 		}
 		io := runtime.IO{Stdout: os.Stdout, Stderr: os.Stderr}
-		return comp.Run(ctx, container.ComposeRestartArgs(e.spec, project, *all), io)
+		return comp.Run(ctx, container.ComposeRestartArgs(e.spec, project, targets), io)
 	}
 
 	if *all {
@@ -261,12 +305,12 @@ func runLogs(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	service := ""
-	if fs.NArg() > 0 {
-		service = fs.Arg(0)
-	}
 	ctx := context.Background()
 	e, err := setup(ctx, &cf)
+	if err != nil {
+		return err
+	}
+	services, err := composeServices(e, fs.Args())
 	if err != nil {
 		return err
 	}
@@ -278,7 +322,7 @@ func runLogs(args []string) error {
 			return err
 		}
 		project := container.ProjectName(e.spec)
-		return comp.Run(ctx, container.ComposeLogsArgs(e.spec, project, *follow, service), io)
+		return comp.Run(ctx, container.ComposeLogsArgs(e.spec, project, *follow, services), io)
 	}
 
 	// Single container: logs come from the runtime directly.

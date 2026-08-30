@@ -19,7 +19,7 @@ import (
 const usage = `devc - a minimal devcontainer runner
 
 Usage:
-  devc <command> [flags]
+  devc <command> [flags] [service...]
 
 Commands:
   up          Create/start the workspace container(s)
@@ -29,7 +29,7 @@ Commands:
   status      Show the workspace's state
   list        List all devc workspaces on this host
   logs        Show container (or compose) logs
-  exec        Run a command inside the workspace container
+  exec        Run a command inside the workspace container (--service for another one)
   ssh         SSH into the workspace (spawn ssh, or --stdio ProxyCommand)
   code        Open the workspace in VSCodium/VS Code over Remote-SSH
   ssh-config  Regenerate or print the workspace's ssh config block
@@ -39,6 +39,10 @@ Commands:
   help        Show this help
 
 Run "devc <command> -h" for command-specific flags.
+
+On a compose workspace, up, down, stop, restart and logs take service names
+after their flags ("devc restart db cache"); with none they act on the whole
+workspace as before.
 `
 
 func main() {

@@ -45,9 +45,21 @@ func TestWorkspaceIDFromProject(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestComposeTargets(t *testing.T) {
+	// An explicit list wins over the fallback; no explicit list falls back.
+	assert.Equal(t, []string{"db"}, ComposeTargets([]string{"db"}, []string{"workspace"}))
+	assert.Equal(t, []string{"workspace"}, ComposeTargets(nil, []string{"workspace"}))
+	assert.Empty(t, ComposeTargets(nil, nil))
+
+	// An empty target list means "every service", so it covers anything.
+	assert.True(t, ComposeCovers(nil, "workspace"))
+	assert.True(t, ComposeCovers([]string{"db", "workspace"}, "workspace"))
+	assert.False(t, ComposeCovers([]string{"db"}, "workspace"))
+}
+
 func TestComposeUpArgs(t *testing.T) {
 	spec := composeSpec()
-	args := ComposeUpArgs(spec, "devc-shop-c52ddf65", false, false)
+	args := ComposeUpArgs(spec, "devc-shop-c52ddf65", false, false, nil)
 
 	// project name and both files, files in overlay order, before the verb.
 	assert.Equal(t, []string{
@@ -63,20 +75,25 @@ func TestComposeUpArgsRebuild(t *testing.T) {
 
 	// --rebuild adds --build and, because a rebuild implies a recreate,
 	// --force-recreate as well.
-	rebuilt := ComposeUpArgs(spec, "p", true, false)
+	rebuilt := ComposeUpArgs(spec, "p", true, false, nil)
 	assert.Equal(t, []string{"up", "--detach", "--build", "--force-recreate"}, rebuilt[len(rebuilt)-4:])
 
 	// --recreate alone forces recreation without rebuilding the image.
-	recreated := ComposeUpArgs(spec, "p", false, true)
+	recreated := ComposeUpArgs(spec, "p", false, true, nil)
 	assert.Equal(t, []string{"up", "--detach", "--force-recreate"}, recreated[len(recreated)-3:])
 	assert.NotContains(t, recreated, "--build")
 }
 
-func TestComposeUpArgsRunServices(t *testing.T) {
+func TestComposeUpArgsServices(t *testing.T) {
 	spec := composeSpec()
-	spec.Compose.RunServices = []string{"workspace", "db"}
-	args := ComposeUpArgs(spec, "p", false, false)
+
+	// Services land after the verb and its flags, in the given order.
+	args := ComposeUpArgs(spec, "p", false, false, []string{"workspace", "db"})
 	assert.Equal(t, []string{"workspace", "db"}, args[len(args)-2:])
+
+	// Rebuilding a single service keeps the flags in front of it.
+	one := ComposeUpArgs(spec, "p", true, false, []string{"db"})
+	assert.Equal(t, []string{"up", "--detach", "--build", "--force-recreate", "db"}, one[len(one)-5:])
 }
 
 func TestComposeDownArgs(t *testing.T) {
@@ -92,36 +109,62 @@ func TestComposeDownArgs(t *testing.T) {
 	assert.Equal(t, "--volumes", withVols[len(withVols)-1])
 }
 
+func TestComposeRemoveArgs(t *testing.T) {
+	spec := composeSpec()
+
+	// Per-service teardown stops the containers before removing them, and never
+	// touches the project's network or volumes.
+	args := ComposeRemoveArgs(spec, "p", []string{"db", "cache"})
+	assert.Equal(t, []string{
+		"--project-name", "p",
+		"--file", "/w/.devcontainer/compose.yaml",
+		"--file", "/w/.devcontainer/telemetry.dev.yaml",
+		"rm", "--force", "--stop", "db", "cache",
+	}, args)
+	assert.NotContains(t, args, "--volumes")
+}
+
+func TestComposeStopArgs(t *testing.T) {
+	spec := composeSpec()
+
+	// No services: the whole project stops.
+	assert.Equal(t, "stop", ComposeStopArgs(spec, "p", nil)[6])
+
+	named := ComposeStopArgs(spec, "p", []string{"db"})
+	assert.Equal(t, []string{"stop", "db"}, named[len(named)-2:])
+}
+
 func TestComposeRestartArgs(t *testing.T) {
 	spec := composeSpec()
 
-	// Default: only the attach service, after the verb.
+	// The services come straight after the verb; callers resolve their default
+	// (attach service, runServices, ...) through ComposeTargets.
 	assert.Equal(t, []string{
 		"--project-name", "p",
 		"--file", "/w/.devcontainer/compose.yaml",
 		"--file", "/w/.devcontainer/telemetry.dev.yaml",
 		"restart", "workspace",
-	}, ComposeRestartArgs(spec, "p", false))
+	}, ComposeRestartArgs(spec, "p", []string{"workspace"}))
 
-	// --all with RunServices restarts exactly those services.
-	spec.Compose.RunServices = []string{"workspace", "db"}
-	all := ComposeRestartArgs(spec, "p", true)
-	assert.Equal(t, "restart", all[len(all)-3])
-	assert.Equal(t, []string{"workspace", "db"}, all[len(all)-2:])
+	multi := ComposeRestartArgs(spec, "p", []string{"workspace", "db"})
+	assert.Equal(t, []string{"restart", "workspace", "db"}, multi[len(multi)-3:])
 
-	// --all with no RunServices restarts everything (no service args).
-	spec.Compose.RunServices = nil
-	assert.Equal(t, "restart", ComposeRestartArgs(spec, "p", true)[len(ComposeRestartArgs(spec, "p", true))-1])
+	// No services restarts everything (no service args).
+	empty := ComposeRestartArgs(spec, "p", nil)
+	assert.Equal(t, "restart", empty[len(empty)-1])
 }
 
 func TestComposeLogsArgs(t *testing.T) {
 	spec := composeSpec()
-	args := ComposeLogsArgs(spec, "p", true, "db")
+	args := ComposeLogsArgs(spec, "p", true, []string{"db"})
 	assert.Contains(t, args, "logs")
 	assert.Contains(t, args, "--follow")
 	assert.Equal(t, "db", args[len(args)-1])
 
-	noSvc := ComposeLogsArgs(spec, "p", false, "")
+	multi := ComposeLogsArgs(spec, "p", false, []string{"db", "cache"})
+	assert.Equal(t, []string{"logs", "db", "cache"}, multi[len(multi)-3:])
+
+	noSvc := ComposeLogsArgs(spec, "p", false, nil)
 	assert.Equal(t, "logs", noSvc[len(noSvc)-1], "no service, no follow => logs is last")
 }
 

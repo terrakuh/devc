@@ -69,14 +69,14 @@ Because the binary runs inside an arbitrary image, it **must** be built static
 
 | Command                          | What it does                                                                                                                          |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `devc up`                        | build/start, inject the agent, run hooks, write ssh config. Flags: `--recreate`, `--rebuild`, `--code` (open editor once up), `--editor <bin>`, `--skip-hooks`, `--rerun-hooks` |
-| `devc down`                      | remove the container(s). `--volumes` (compose), `--purge` (also drop keys, ssh block, control dir), `--auto` (honor `shutdownAction`) |
-| `devc stop`                      | stop without removing                                                                                                                 |
-| `devc restart [--all]`           | restart the main service (compose: just the attach service; `--all` restarts every service)                                           |
+| `devc up [service...]`           | build/start, inject the agent, run hooks, write ssh config. Flags: `--recreate`, `--rebuild`, `--code` (open editor once up), `--editor <bin>`, `--skip-hooks`, `--rerun-hooks` |
+| `devc down [service...]`         | remove the container(s). `--volumes` (compose), `--purge` (also drop keys, ssh block, control dir), `--auto` (honor `shutdownAction`) |
+| `devc stop [service...]`         | stop without removing                                                                                                                 |
+| `devc restart [--all] [service...]` | restart the main service (compose: just the attach service; `--all` restarts every service)                                        |
 | `devc status [--json]`           | this workspace: kind, runtime, state, ports, config drift                                                                             |
 | `devc list [--json]`             | every devc workspace on the host (found by label)                                                                                     |
-| `devc logs [--follow] [service]` | container / compose logs                                                                                                              |
-| `devc exec [-T] -- <cmd>`        | run as the remote user in the workspace folder, with `remoteEnv`                                                                      |
+| `devc logs [--follow] [service...]` | container / compose logs                                                                                                           |
+| `devc exec [-T] [--service <s>] -- <cmd>` | run as the remote user in the workspace folder, with `remoteEnv`                                                             |
 | `devc code [--editor <bin>]`     | open the workspace in VSCodium (preferred) or VS Code over Remote-SSH                                                                 |
 | `devc ssh [<name>]`              | spawn `ssh devc.<name>` (shares the ControlMaster)                                                                                    |
 | `devc ssh --stdio [--start]`     | ProxyCommand transport (what the generated config runs)                                                                               |
@@ -95,6 +95,38 @@ folder, so you can run e.g. `devc code -n shop` or `devc stop -n api` from
 anywhere. It resolves the workspace via container labels, so it works for any
 workspace that still has a container (running or stopped). Compose workspaces
 resolve too, but only once `devc up` has recorded them (see below).
+
+### Targeting single services (compose)
+
+On a compose workspace, `up`, `down`, `stop`, `restart` and `logs` take service
+names after their flags; with none they behave exactly as before and act on the
+whole workspace.
+
+```sh
+devc restart db cache      # restart just these two services
+devc up --rebuild db       # rebuild and recreate one service
+devc stop db               # leave the rest of the project running
+devc down db               # stop+remove db's container (compose rm), project stays
+devc logs --follow db api  # follow two services
+devc exec --service db -- psql -U dev   # a shell in a non-workspace service
+```
+
+Because Go's flag parsing stops at the first positional argument, flags have to
+come before the service names: `devc restart -n shop db`, not
+`devc restart db -n shop`.
+
+Naming services only changes which containers the verb touches, never the
+workspace's identity:
+
+- `devc up <services>` that leaves out the workspace's own service starts them
+  and stops there - no hooks, no provisioning, no ssh config, since there is no
+  workspace container in play.
+- `devc down <services>` runs `compose rm --force --stop` rather than `down`, so
+  the project's network and named volumes survive for the services still up.
+  `--volumes` and `--purge` are workspace-wide and are rejected with services.
+- `devc exec --service <s>` runs plainly in that container: `remoteUser`, the
+  workspace folder and `remoteEnv` describe the workspace's container, not
+  anyone else's.
 
 ---
 

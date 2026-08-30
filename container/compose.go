@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/terrakuh/devc/config"
@@ -60,13 +61,31 @@ func baseArgs(spec *config.Spec, project string) []string {
 	return append(args, fileFlags(spec)...)
 }
 
+// ComposeTargets picks the services a compose verb acts on: the ones the user
+// named explicitly, or fallback when they named none. An empty result means
+// "every service in the project" - that is how compose reads a missing service
+// list, so it needs no special casing at the call sites.
+func ComposeTargets(explicit, fallback []string) []string {
+	if len(explicit) > 0 {
+		return explicit
+	}
+	return fallback
+}
+
+// ComposeCovers reports whether a target list includes service, treating the
+// empty list as "every service" (see ComposeTargets).
+func ComposeCovers(targets []string, service string) bool {
+	return len(targets) == 0 || slices.Contains(targets, service)
+}
+
 // ComposeUpArgs constructs `compose -p <project> -f <file> up -d [--build]
 // [--force-recreate] [services]`. rebuild adds --build so the image is rebuilt
 // from source; recreate adds --force-recreate so the container is replaced even
 // when compose considers it up-to-date. A rebuild implies a recreate: a running
 // container keeps its old image until it is recreated, so a bare --build would
-// rebuild the image but leave the stale container in place.
-func ComposeUpArgs(spec *config.Spec, project string, rebuild, recreate bool) []string {
+// rebuild the image but leave the stale container in place. An empty services
+// list brings up every service in the project.
+func ComposeUpArgs(spec *config.Spec, project string, rebuild, recreate bool, services []string) []string {
 	args := baseArgs(spec, project)
 	args = append(args, "up", "--detach")
 	if rebuild {
@@ -75,11 +94,12 @@ func ComposeUpArgs(spec *config.Spec, project string, rebuild, recreate bool) []
 	if recreate || rebuild {
 		args = append(args, "--force-recreate")
 	}
-	args = append(args, spec.Compose.RunServices...)
-	return args
+	return append(args, services...)
 }
 
-// ComposeDownArgs constructs `compose -p <project> -f <file> down [--volumes]`.
+// ComposeDownArgs constructs `compose -p <project> -f <file> down [--volumes]`,
+// which tears the whole project down. Removing individual services goes through
+// ComposeRemoveArgs instead.
 func ComposeDownArgs(spec *config.Spec, project string, volumes bool) []string {
 	args := baseArgs(spec, project)
 	args = append(args, "down")
@@ -89,41 +109,46 @@ func ComposeDownArgs(spec *config.Spec, project string, volumes bool) []string {
 	return args
 }
 
-// ComposeStopArgs constructs `compose -p <project> -f <file> stop`.
-func ComposeStopArgs(spec *config.Spec, project string) []string {
-	return append(baseArgs(spec, project), "stop")
+// ComposeRemoveArgs constructs `compose -p <project> -f <file> rm --force --stop
+// <services>`, the per-service counterpart of down: it stops and removes just
+// those containers and leaves the project's network and named volumes alone.
+// `down <services>` would be the obvious spelling but is a recent docker-compose
+// addition that podman-compose does not share, whereas `rm` is universal.
+func ComposeRemoveArgs(spec *config.Spec, project string, services []string) []string {
+	args := append(baseArgs(spec, project), "rm", "--force", "--stop")
+	return append(args, services...)
 }
 
-// ComposeRestartArgs constructs `compose -p <project> -f <file> restart [services]`.
-// With all=false only the workspace's attach service is restarted; with all=true
-// the workspace's services are restarted (mirroring up: RunServices, or every
-// service when RunServices is empty).
-func ComposeRestartArgs(spec *config.Spec, project string, all bool) []string {
-	args := append(baseArgs(spec, project), "restart")
-	if all {
-		return append(args, spec.Compose.RunServices...)
-	}
-	return append(args, spec.Compose.Service)
+// ComposeStopArgs constructs `compose -p <project> -f <file> stop [services]`.
+// An empty services list stops the whole project.
+func ComposeStopArgs(spec *config.Spec, project string, services []string) []string {
+	return append(append(baseArgs(spec, project), "stop"), services...)
 }
 
-// ComposeLogsArgs constructs `compose -p <project> -f <file> logs [--follow] [service]`.
-func ComposeLogsArgs(spec *config.Spec, project string, follow bool, service string) []string {
+// ComposeRestartArgs constructs `compose -p <project> -f <file> restart
+// [services]`. An empty services list restarts every service in the project;
+// callers resolve their default through ComposeTargets.
+func ComposeRestartArgs(spec *config.Spec, project string, services []string) []string {
+	return append(append(baseArgs(spec, project), "restart"), services...)
+}
+
+// ComposeLogsArgs constructs `compose -p <project> -f <file> logs [--follow]
+// [services]`. An empty services list shows the whole project's logs.
+func ComposeLogsArgs(spec *config.Spec, project string, follow bool, services []string) []string {
 	args := baseArgs(spec, project)
 	args = append(args, "logs")
 	if follow {
 		args = append(args, "--follow")
 	}
-	if service != "" {
-		args = append(args, service)
-	}
-	return args
+	return append(args, services...)
 }
 
-// ComposeUp brings the workspace's services up (detached). rebuild rebuilds the
-// service images before (re)creating; recreate forces the containers to be
-// replaced even when compose considers them up-to-date.
-func ComposeUp(ctx context.Context, c *runtime.Compose, spec *config.Spec, project string, rebuild, recreate bool, io runtime.IO) error {
-	return c.Run(ctx, ComposeUpArgs(spec, project, rebuild, recreate), io)
+// ComposeUp brings the given services up (detached); an empty list means every
+// service in the project. rebuild rebuilds the service images before
+// (re)creating; recreate forces the containers to be replaced even when compose
+// considers them up-to-date.
+func ComposeUp(ctx context.Context, c *runtime.Compose, spec *config.Spec, project string, rebuild, recreate bool, services []string, io runtime.IO) error {
+	return c.Run(ctx, ComposeUpArgs(spec, project, rebuild, recreate, services), io)
 }
 
 // ComposeDown tears the project down.
