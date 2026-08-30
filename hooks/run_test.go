@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/terrakuh/devc/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/terrakuh/devc/config"
 )
 
 // recorder is an Executor that records the argvs it ran.
