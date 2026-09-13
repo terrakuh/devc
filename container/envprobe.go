@@ -45,17 +45,29 @@ func probeShellFlags(mode config.EnvProbe) string {
 	}
 }
 
-// parseEnvOutput parses `env` output into a map, skipping malformed lines and a
-// few variables that are process-specific and must not be pinned into sessions.
+// skipProbed are variables the probe shell describes about itself, not about the
+// container. Pinning them into every later session freezes a value that is stale
+// or dangling by then: XDG_RUNTIME_DIR in particular names a per-login directory
+// nothing creates in a container, and tools that trust it (the VSCodium server
+// install script uses it for its lock and temp files) then fail. remoteEnv still
+// overrides anything here for a workspace that really needs it.
+var skipProbed = map[string]bool{
+	"_": true, "SHLVL": true, "PWD": true, "OLDPWD": true,
+	"XDG_RUNTIME_DIR": true,
+	"SSH_AUTH_SOCK":   true, "SSH_CONNECTION": true, "SSH_CLIENT": true, "SSH_TTY": true,
+	"TERM": true, "GPG_TTY": true,
+}
+
+// parseEnvOutput parses `env` output into a map, skipping malformed lines and
+// the session-scoped variables above.
 func parseEnvOutput(out string) map[string]string {
-	skip := map[string]bool{"_": true, "SHLVL": true, "PWD": true, "OLDPWD": true}
 	env := map[string]string{}
 	for _, line := range strings.Split(out, "\n") {
 		if line == "" {
 			continue
 		}
 		k, v, ok := strings.Cut(line, "=")
-		if !ok || k == "" || skip[k] {
+		if !ok || k == "" || skipProbed[k] {
 			continue
 		}
 		env[k] = v

@@ -37,7 +37,10 @@ type State struct {
 	ConfigHash     string            `json:"configHash,omitempty"`
 	Hooks          map[string]string `json:"hooks,omitempty"` // hook name -> RFC3339 timestamp
 	EnvProbe       map[string]string `json:"envProbe,omitempty"`
-	AgentVersion   string            `json:"agentVersion,omitempty"`
+	// EnvProbeVersion is the devc version that wrote EnvProbe; a mismatch
+	// re-probes, since which variables are pinned can change between versions.
+	EnvProbeVersion string `json:"envProbeVersion,omitempty"`
+	AgentVersion    string `json:"agentVersion,omitempty"`
 }
 
 // Peek reads a workspace's state without creating its directory, for read-only

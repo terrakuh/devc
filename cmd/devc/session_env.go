@@ -35,6 +35,12 @@ func resolveSessionEnv(ctx context.Context, e *env, ref, containerID string) map
 	return merged
 }
 
+// probeIsFresh reports whether a cached probe can be reused: same container, and
+// written by this version of devc.
+func probeIsFresh(st *state.State, containerID, devcVersion string) bool {
+	return st.EnvProbe != nil && st.ContainerID == containerID && st.EnvProbeVersion == devcVersion
+}
+
 // loadOrRunProbe returns the cached env probe for the current container, running
 // it if absent. Failures are silent (probe is best-effort).
 func loadOrRunProbe(ctx context.Context, e *env, ref, containerID string) map[string]string {
@@ -46,11 +52,12 @@ func loadOrRunProbe(ctx context.Context, e *env, ref, containerID string) map[st
 	if err != nil {
 		return nil
 	}
-	if st.ContainerID == containerID && st.EnvProbe != nil {
+	if probeIsFresh(st, containerID, version) {
 		return st.EnvProbe
 	}
 	probe := container.ProbeEnv(ctx, e.runner, ref, e.spec.RemoteUser, e.spec.EnvProbe)
 	st.EnvProbe = probe
+	st.EnvProbeVersion = version
 	st.ContainerID = containerID
 	_ = dir.Save(st)
 	return probe

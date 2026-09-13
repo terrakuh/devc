@@ -2,6 +2,7 @@ package container
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,6 +26,34 @@ func TestParseEnvOutput(t *testing.T) {
 	assert.NotContains(t, env, "_", "process-specific vars are dropped")
 	assert.NotContains(t, env, "SHLVL")
 	assert.NotContains(t, env, "BAD_LINE")
+}
+
+// TestParseEnvOutputDropsSessionScoped covers variables that describe the probe
+// shell's own session rather than the container. Pinning them into every later
+// session bakes in a value that is wrong or dangling by then - XDG_RUNTIME_DIR
+// names a directory nothing creates in a container, and the VSCodium server
+// install script uses it as its lock and temp dir.
+func TestParseEnvOutputDropsSessionScoped(t *testing.T) {
+	out := strings.Join([]string{
+		"PATH=/usr/bin",
+		"XDG_RUNTIME_DIR=/run/user/0",
+		"SSH_AUTH_SOCK=/tmp/ssh-XXXX/agent.42",
+		"SSH_CONNECTION=10.0.0.1 55000 10.0.0.2 22",
+		"SSH_CLIENT=10.0.0.1 55000 22",
+		"SSH_TTY=/dev/pts/3",
+		"GPG_TTY=not a tty",
+		"TERM=dumb",
+		"",
+	}, "\n")
+
+	env := parseEnvOutput(out)
+	assert.Equal(t, "/usr/bin", env["PATH"], "real container env still comes through")
+	for _, k := range []string{
+		"XDG_RUNTIME_DIR", "SSH_AUTH_SOCK", "SSH_CONNECTION",
+		"SSH_CLIENT", "SSH_TTY", "GPG_TTY", "TERM",
+	} {
+		assert.NotContains(t, env, k, "%s belongs to the probe shell, not the container", k)
+	}
 }
 
 func TestProbeEnvNoneSkips(t *testing.T) {
