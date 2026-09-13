@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -112,6 +113,46 @@ func TestInjectHappyPath(t *testing.T) {
 	assert.Contains(t, joined, "exec --user 0 ctr chmod 0600 "+AgentHostKey)
 	// Env file is written via a piped cat.
 	assert.Contains(t, joined, "cat > "+AgentEnvFile)
+}
+
+// TestInjectAgentDirIsTraversable pins the mode the SFTP subsystem needs to
+// re-exec the agent as a non-root session user. 0700 breaks that while
+// interactive ssh keeps working. See agent.TestSFTPReExecAsSessionUser.
+func TestInjectAgentDirIsTraversable(t *testing.T) {
+	mode, err := strconv.ParseUint(AgentDirMode, 8, 32)
+	require.NoError(t, err)
+	assert.NotZero(t, mode&0o001, "AgentDir must stay world-traversable (--x)")
+}
+
+// TestInjectSecretsAreRootOnly: AgentDir is traversable, so the secrets inside
+// need their own 0600.
+func TestInjectSecretsAreRootOnly(t *testing.T) {
+	dir := t.TempDir()
+	agentBin := filepath.Join(dir, "devc")
+	hostKey := filepath.Join(dir, "host_key")
+	authKey := filepath.Join(dir, "auth.pub")
+	for _, p := range []string{agentBin, hostKey, authKey} {
+		require.NoError(t, os.WriteFile(p, []byte("x"), 0o600))
+	}
+
+	f := runtime.NewFake()
+	f.OutputFunc = func(args []string) ([]byte, error) {
+		if len(args) >= 3 && args[0] == "exec" && args[2] == "uname" {
+			return []byte("x86_64\n"), nil
+		}
+		return nil, nil
+	}
+	require.NoError(t, Inject(context.Background(), f, InjectOptions{
+		Container: "ctr", AgentSource: agentBin, HostArch: "amd64",
+		HostKeyFile: hostKey, AuthorizedKeyFile: authKey,
+		Env: map[string]string{"SECRET": "s3cret"},
+	}))
+
+	joined := strings.Join(f.CallStrings(), "\n")
+	assert.Contains(t, joined, "exec --user 0 ctr chmod "+AgentDirMode+" "+AgentDir)
+	assert.Contains(t, joined, "exec --user 0 ctr chmod 0600 "+AgentHostKey)
+	assert.Contains(t, joined, "exec --user 0 ctr chmod 0600 "+AgentAuthKey)
+	assert.Contains(t, joined, "exec --user 0 ctr chmod 0600 "+AgentEnvFile)
 }
 
 func TestInjectSkipsCopyWhenUpToDate(t *testing.T) {

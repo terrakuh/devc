@@ -22,6 +22,11 @@ const (
 	AgentEnvFile = AgentDir + "/env"
 )
 
+// AgentDirMode keeps AgentDir traversable (the trailing 1): the SFTP subsystem
+// re-execs AgentBinary as the session user, who cannot exec a file it cannot
+// reach. The files inside carry their own modes.
+const AgentDirMode = "0711"
+
 // InjectOptions parameterises agent injection.
 type InjectOptions struct {
 	// Container is the target container reference (name or id).
@@ -59,7 +64,7 @@ func Inject(ctx context.Context, r runtime.Runner, opts InjectOptions) error {
 	if _, err := r.Output(ctx, rootExec(opts.Container, "mkdir", "-p", AgentDir)...); err != nil {
 		return fmt.Errorf("create %s: %w", AgentDir, err)
 	}
-	if _, err := r.Output(ctx, rootExec(opts.Container, "chmod", "0700", AgentDir)...); err != nil {
+	if _, err := r.Output(ctx, rootExec(opts.Container, "chmod", AgentDirMode, AgentDir)...); err != nil {
 		return err
 	}
 
@@ -81,8 +86,15 @@ func Inject(ctx context.Context, r runtime.Runner, opts InjectOptions) error {
 	if err := cpInto(ctx, r, opts.AuthorizedKeyFile, opts.Container, AgentAuthKey); err != nil {
 		return fmt.Errorf("copy authorized key: %w", err)
 	}
+	if _, err := r.Output(ctx, rootExec(opts.Container, "chmod", "0600", AgentAuthKey)...); err != nil {
+		return err
+	}
 	if err := writeEnvFile(ctx, r, opts.Container, opts.Env); err != nil {
 		return fmt.Errorf("write env file: %w", err)
+	}
+	// remoteEnv can carry tokens, and AgentDir no longer hides it.
+	if _, err := r.Output(ctx, rootExec(opts.Container, "chmod", "0600", AgentEnvFile)...); err != nil {
+		return err
 	}
 	return nil
 }
