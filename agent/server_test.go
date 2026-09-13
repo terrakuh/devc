@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -209,6 +211,39 @@ func TestRemoteForwardTCPIP(t *testing.T) {
 	assert.Equal(t, msg, buf)
 }
 
+// TestRemoteForwardCancelReleasesPort: the client knows a port-0 forward only
+// by the port the agent allocated, and cancel-tcpip-forward carries that. A
+// server filing the listener under the requested port reports success but
+// leaves it bound.
+func TestRemoteForwardCancelReleasesPort(t *testing.T) {
+	host, cs, cp := testKeys(t)
+	client := dialAgent(t, Config{HostKey: host, Authorized: []ssh.PublicKey{cp}}, cs)
+
+	ln, err := client.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	tcpAddr, ok := ln.Addr().(*net.TCPAddr)
+	require.True(t, ok)
+	port := tcpAddr.Port
+	require.NotZero(t, port, "the agent must report the port it allocated")
+
+	require.NoError(t, ln.Close())
+
+	// Must be released, not just acknowledged. The reply and the close are not
+	// ordered, so allow a moment.
+	deadline := time.Now().Add(5 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		probe, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err == nil {
+			_ = probe.Close()
+			return
+		}
+		lastErr = err
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("port %d still bound after the forward was cancelled: %v", port, lastErr)
+}
+
 func TestInteractivePTY(t *testing.T) {
 	host, cs, cp := testKeys(t)
 	client := dialAgent(t, Config{HostKey: host, Authorized: []ssh.PublicKey{cp}}, cs)
@@ -233,4 +268,98 @@ func TestInteractivePTY(t *testing.T) {
 	fmt.Fprintln(stdin, "exit")
 	require.NoError(t, sess.Wait())
 	assert.Contains(t, out.String(), "pty-works")
+}
+
+// syncBuffer lets the test poll stdout while the ssh client writes it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// TestWindowChangeResizesRunningPTY covers a resize during a session, the only
+// time one happens. A server that stops reading requests once the shell starts
+// ignores every resize.
+func TestWindowChangeResizesRunningPTY(t *testing.T) {
+	host, cs, cp := testKeys(t)
+	client := dialAgent(t, Config{HostKey: host, Authorized: []ssh.PublicKey{cp}}, cs)
+
+	sess, err := client.NewSession()
+	require.NoError(t, err)
+	defer sess.Close()
+	require.NoError(t, sess.RequestPty("xterm", 24, 80, ssh.TerminalModes{}))
+
+	stdin, err := sess.StdinPipe()
+	require.NoError(t, err)
+	out := &syncBuffer{}
+	sess.Stdout = out
+	sess.Stderr = io.Discard
+	require.NoError(t, sess.Shell())
+
+	require.NoError(t, sess.WindowChange(40, 100))
+
+	// The resize and the shell's readiness race, so ask repeatedly.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		fmt.Fprintln(stdin, "stty size")
+		time.Sleep(100 * time.Millisecond)
+		if strings.Contains(out.String(), "40 100") {
+			return // resized
+		}
+	}
+	t.Fatalf("pty was never resized to 40x100; shell saw:\n%s", out.String())
+}
+
+// TestChannelRequestsDoNotStallConnection is the sharp edge of the same defect.
+// x/crypto/ssh feeds channel requests from the connection's one mux loop with a
+// blocking send into a 16-slot buffer, so a server that stops draining them
+// does not just ignore resizes - the whole connection freezes.
+func TestChannelRequestsDoNotStallConnection(t *testing.T) {
+	host, cs, cp := testKeys(t)
+	client := dialAgent(t, Config{HostKey: host, Authorized: []ssh.PublicKey{cp}}, cs)
+
+	sess, err := client.NewSession()
+	require.NoError(t, err)
+	defer sess.Close()
+	require.NoError(t, sess.RequestPty("xterm", 24, 80, ssh.TerminalModes{}))
+	_, err = sess.StdinPipe()
+	require.NoError(t, err)
+	sess.Stdout, sess.Stderr = io.Discard, io.Discard
+	require.NoError(t, sess.Shell())
+
+	// Comfortably more than chanSize; a user dragging a window emits this many.
+	for i := 0; i < 4*16; i++ {
+		require.NoError(t, sess.WindowChange(24+i%10, 80+i%10))
+	}
+
+	// Under a timeout: a wedged mux loop would hang the test binary.
+	done := make(chan error, 1)
+	go func() {
+		s2, err := client.NewSession()
+		if err != nil {
+			done <- err
+			return
+		}
+		defer s2.Close()
+		_, err = s2.Output("echo still-alive")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("connection stalled: a new session could not be opened after a channel-request flood")
+	}
 }

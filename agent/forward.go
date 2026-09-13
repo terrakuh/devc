@@ -123,8 +123,10 @@ func (f *remoteForwards) start(ctx context.Context, req *ssh.Request) {
 		_ = req.Reply(true, reply)
 	}
 
+	// Key on the port actually bound: a client that asked for 0 knows the
+	// forward only by the allocated port, and cancel-tcpip-forward carries it.
 	f.mu.Lock()
-	f.ln[forwardKey(p.BindAddr, p.BindPort)] = ln
+	f.ln[forwardKey(p.BindAddr, bindPort)] = ln
 	f.mu.Unlock()
 
 	go f.accept(ln, p.BindAddr, bindPort)

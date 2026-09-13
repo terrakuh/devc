@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync"
 	"syscall"
 
 	"github.com/creack/pty"
@@ -18,15 +19,37 @@ type session struct {
 	srv     *Server
 	channel ssh.Channel
 
-	ptyReq  bool
-	term    string
-	ptmx    *os.File
+	// mu guards the pty/env requests. The request loop writes them; the command
+	// goroutine reads a snapshot.
+	mu     sync.Mutex
+	ptyReq bool
+	term   string
+	env    map[string]string
+
+	// winCh carries the latest terminal size to the running pty.
 	winCh   chan winSize
-	env     map[string]string
 	started bool
 }
 
 type winSize struct{ cols, rows, x, y uint32 }
+
+// sessionParams is the pty/env state captured when a command starts, so the
+// request loop can keep handling requests while it runs.
+type sessionParams struct {
+	ptyReq bool
+	term   string
+	env    map[string]string
+}
+
+func (s *session) snapshot() sessionParams {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	env := make(map[string]string, len(s.env))
+	for k, v := range s.env {
+		env[k] = v
+	}
+	return sessionParams{ptyReq: s.ptyReq, term: s.term, env: env}
+}
 
 // handleSession accepts a session channel and drives its request loop.
 func (s *Server) handleSession(ctx context.Context, newChan ssh.NewChannel) {
@@ -38,7 +61,7 @@ func (s *Server) handleSession(ctx context.Context, newChan ssh.NewChannel) {
 		srv:     s,
 		channel: channel,
 		env:     map[string]string{},
-		winCh:   make(chan winSize, 4),
+		winCh:   make(chan winSize, 1),
 	}
 	defer channel.Close()
 
@@ -54,15 +77,16 @@ func (s *Server) handleSession(ctx context.Context, newChan ssh.NewChannel) {
 		case "auth-agent-req@openssh.com":
 			sess.handleAgentForwardReq(req)
 		case "shell":
-			sess.start(ctx, req, nil)
+			sess.spawn(req, func(r *ssh.Request) { sess.start(ctx, r, nil) })
 		case "exec":
-			sess.start(ctx, req, execPayload(req.Payload))
+			command := execPayload(req.Payload)
+			sess.spawn(req, func(r *ssh.Request) { sess.start(ctx, r, command) })
 		case "signal":
 			// Best-effort; the child gets SIGHUP when the channel closes anyway.
 			reply(req, true)
 		case "subsystem":
 			if subsystemName(req.Payload) == "sftp" {
-				sess.startSFTP(ctx, req)
+				sess.spawn(req, func(r *ssh.Request) { sess.startSFTP(ctx, r) })
 			} else {
 				reply(req, false)
 			}
@@ -72,56 +96,91 @@ func (s *Server) handleSession(ctx context.Context, newChan ssh.NewChannel) {
 	}
 }
 
+// spawn claims the session's single command slot and runs fn on its own
+// goroutine, so the loop above keeps draining. x/crypto/ssh delivers channel
+// requests from the connection's one mux loop with a blocking send, so running
+// a command inline freezes every channel once 16 requests pile up.
+func (s *session) spawn(req *ssh.Request, fn func(*ssh.Request)) {
+	if s.started {
+		reply(req, false)
+		return
+	}
+	s.started = true
+	go fn(req)
+}
+
 func (s *session) handlePTYReq(req *ssh.Request) {
 	term, _, _, cols, rows, ok := parsePTYReq(req.Payload)
 	if !ok {
 		reply(req, false)
 		return
 	}
+	s.mu.Lock()
 	s.ptyReq = true
 	s.term = term
-	select {
-	case s.winCh <- winSize{cols: cols, rows: rows}:
-	default:
-	}
+	s.mu.Unlock()
+	s.resize(winSize{cols: cols, rows: rows})
 	reply(req, true)
 }
 
 func (s *session) handleEnv(req *ssh.Request) {
 	name, value, ok := parseEnv(req.Payload)
 	if ok {
+		s.mu.Lock()
 		s.env[name] = value
+		s.mu.Unlock()
 	}
 	reply(req, true)
 }
 
 func (s *session) handleWindowChange(req *ssh.Request) {
 	cols, rows, _, _, ok := parseWindowChange(req.Payload)
-	if ok && s.ptmx != nil {
-		_ = pty.Setsize(s.ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
+	if ok {
+		s.resize(winSize{cols: cols, rows: rows})
 	}
 	reply(req, false)
 }
 
-// start launches the shell (command == nil) or the given command. It replies to
-// the request, then runs to completion and sends exit-status.
-func (s *session) start(ctx context.Context, req *ssh.Request, command *string) {
-	if s.started {
-		reply(req, false)
-		return
+// resize publishes the latest size without blocking the request loop, which may
+// have no pty to talk to yet. An unread size is stale, so it is replaced.
+func (s *session) resize(ws winSize) {
+	select {
+	case <-s.winCh: // discard a superseded size
+	default:
 	}
-	s.started = true
+	select {
+	case s.winCh <- ws:
+	default: // the applier just took the slot
+	}
+}
 
-	cmd, err := s.buildCommand(ctx, command)
+// applyResizes owns ptmx for resizing until stop is closed.
+func (s *session) applyResizes(ptmx *os.File, stop <-chan struct{}) {
+	for {
+		select {
+		case ws := <-s.winCh:
+			_ = pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(ws.cols), Rows: uint16(ws.rows)})
+		case <-stop:
+			return
+		}
+	}
+}
+
+// start launches the shell (command == nil) or the given command. It replies to
+// the request, then runs to completion and sends exit-status. Always called via
+// spawn, which owns the single-command guard.
+func (s *session) start(ctx context.Context, req *ssh.Request, command *string) {
+	p := s.snapshot()
+	cmd, err := s.buildCommand(ctx, command, p)
 	if err != nil {
 		reply(req, false)
 		s.exit(1)
 		return
 	}
-	s.srv.debugf("start: pty=%v SSH_AUTH_SOCK=%q cmd=%s", s.ptyReq, s.srv.agentSock(), commandLabel(command))
+	s.srv.debugf("start: pty=%v SSH_AUTH_SOCK=%q cmd=%s", p.ptyReq, s.srv.agentSock(), commandLabel(command))
 	reply(req, true)
 
-	if s.ptyReq {
+	if p.ptyReq {
 		s.runWithPTY(cmd)
 	} else {
 		s.runWithPipes(cmd)
@@ -131,7 +190,7 @@ func (s *session) start(ctx context.Context, req *ssh.Request, command *string) 
 // buildCommand assembles the *exec.Cmd: the login shell (interactive) or
 // `<shell> -c <command>`, as the configured user, in Cwd, with the merged
 // environment.
-func (s *session) buildCommand(ctx context.Context, command *string) (*exec.Cmd, error) {
+func (s *session) buildCommand(ctx context.Context, command *string, p sessionParams) (*exec.Cmd, error) {
 	u, err := resolveUser(s.srv.cfg.User)
 	if err != nil {
 		return nil, err
@@ -142,16 +201,16 @@ func (s *session) buildCommand(ctx context.Context, command *string) (*exec.Cmd,
 	} else {
 		args = []string{"-c", *command}
 	}
-	return s.userCommand(ctx, u, u.shell, args...), nil
+	return s.userCommand(ctx, u, p, u.shell, args...), nil
 }
 
 // userCommand builds an *exec.Cmd to run name+args as u, in the session's cwd,
 // with the merged environment and (when switching identity) the user's process
 // credentials. Setsid detaches the child into its own session.
-func (s *session) userCommand(ctx context.Context, u *userInfo, name string, args ...string) *exec.Cmd {
+func (s *session) userCommand(ctx context.Context, u *userInfo, p sessionParams, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = s.cwd(u)
-	cmd.Env = s.buildEnv(u)
+	cmd.Env = s.buildEnv(u, p)
 	if u.setCred {
 		cmd.SysProcAttr = &syscall.SysProcAttr{
 			Credential: &syscall.Credential{Uid: u.uid, Gid: u.gid},
@@ -174,7 +233,7 @@ func (s *session) cwd(u *userInfo) string {
 
 // buildEnv merges, in increasing precedence: a minimal base, the configured
 // environment (remoteEnv + probe), then the client-sent env requests.
-func (s *session) buildEnv(u *userInfo) []string {
+func (s *session) buildEnv(u *userInfo, p sessionParams) []string {
 	merged := map[string]string{
 		"HOME":    u.home,
 		"USER":    u.name,
@@ -185,7 +244,7 @@ func (s *session) buildEnv(u *userInfo) []string {
 	for k, v := range s.srv.cfg.Environment {
 		merged[k] = v
 	}
-	for k, v := range s.env {
+	for k, v := range p.env {
 		merged[k] = v
 	}
 	// Once the connection has agent forwarding, every session gets SSH_AUTH_SOCK,
@@ -194,8 +253,8 @@ func (s *session) buildEnv(u *userInfo) []string {
 	if sock := s.srv.agentSock(); sock != "" {
 		merged["SSH_AUTH_SOCK"] = sock
 	}
-	if s.ptyReq && s.term != "" {
-		merged["TERM"] = s.term
+	if p.ptyReq && p.term != "" {
+		merged["TERM"] = p.term
 	}
 	out := make([]string, 0, len(merged))
 	for k, v := range merged {
@@ -211,15 +270,14 @@ func (s *session) runWithPTY(cmd *exec.Cmd) {
 		s.exit(1)
 		return
 	}
-	s.ptmx = ptmx
-	defer func() { _ = ptmx.Close() }()
-
-	// Apply any pending window size.
-	select {
-	case ws := <-s.winCh:
-		_ = pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(ws.cols), Rows: uint16(ws.rows)})
-	default:
-	}
+	// Apply the pty-req size and every later window-change. The applier must be
+	// joined before ptmx closes: Setsize and Close on one *os.File race.
+	stop := make(chan struct{})
+	applierDone := make(chan struct{})
+	go func() {
+		defer close(applierDone)
+		s.applyResizes(ptmx, stop)
+	}()
 
 	// client -> pty. This goroutine blocks reading the channel; it is unblocked
 	// when exit() closes the channel below (the client may never close its own
@@ -229,6 +287,8 @@ func (s *session) runWithPTY(cmd *exec.Cmd) {
 	_, _ = io.Copy(s.channel, ptmx) // pty -> client, ends when the shell exits
 
 	err = cmd.Wait()
+	close(stop)
+	<-applierDone
 	_ = ptmx.Close()
 	s.exit(exitCode(err))
 }

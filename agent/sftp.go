@@ -22,13 +22,8 @@ var SFTPCommand = []string{"__sftp"}
 // SFTP server runs in a privilege-dropped subprocess (the same devc binary
 // re-exec'd as __sftp) whose stdio is bridged to the channel - mirroring how
 // sshd forks its sftp-server as the user.
+// Always called via spawn, which owns the single-command guard.
 func (s *session) startSFTP(ctx context.Context, req *ssh.Request) {
-	if s.started {
-		reply(req, false)
-		return
-	}
-	s.started = true
-
 	self, err := os.Executable()
 	if err != nil {
 		reply(req, false)
@@ -43,7 +38,7 @@ func (s *session) startSFTP(ctx context.Context, req *ssh.Request) {
 	}
 
 	argv := append([]string{}, SFTPCommand...)
-	cmd := s.userCommand(ctx, u, self, argv...)
+	cmd := s.userCommand(ctx, u, s.snapshot(), self, argv...)
 	cmd.Stdout = s.channel
 	cmd.Stderr = s.channel.Stderr()
 	stdin, err := cmd.StdinPipe()
