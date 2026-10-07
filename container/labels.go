@@ -19,6 +19,7 @@ const (
 	LabelID         = "com.github.terrakuh.devc.id"
 	LabelName       = "com.github.terrakuh.devc.name"
 	LabelLocal      = "com.github.terrakuh.devc.local"
+	LabelConfig     = "com.github.terrakuh.devc.config"
 	LabelConfigHash = "com.github.terrakuh.devc.config-hash"
 )
 
@@ -43,6 +44,7 @@ func Labels(spec *config.Spec) map[string]string {
 		LabelID:         spec.ID,
 		LabelName:       spec.Name,
 		LabelLocal:      spec.LocalWorkspaceFolder,
+		LabelConfig:     spec.ConfigPath,
 		LabelConfigHash: ConfigHash(spec),
 	}
 }
@@ -66,9 +68,10 @@ func ConfigHash(spec *config.Spec) string {
 }
 
 // labelArgs renders a label map as repeated --label k=v flags, in a stable
-// order (LabelID, LabelName, LabelLocal, LabelConfigHash) for deterministic argv.
+// order (LabelID, LabelName, LabelLocal, LabelConfig, LabelConfigHash) for
+// deterministic argv.
 func labelArgs(labels map[string]string) []string {
-	order := []string{LabelID, LabelName, LabelLocal, LabelConfigHash}
+	order := []string{LabelID, LabelName, LabelLocal, LabelConfig, LabelConfigHash}
 	args := make([]string, 0, len(order)*2)
 	for _, k := range order {
 		if v, ok := labels[k]; ok {

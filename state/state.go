@@ -32,6 +32,7 @@ type State struct {
 	ID             string            `json:"id"`
 	Name           string            `json:"name,omitempty"`
 	LocalFolder    string            `json:"localWorkspaceFolder,omitempty"`
+	ConfigPath     string            `json:"configPath,omitempty"`
 	ContainerID    string            `json:"containerID,omitempty"`
 	ComposeProject string            `json:"composeProject,omitempty"`
 	ConfigHash     string            `json:"configHash,omitempty"`
@@ -53,6 +54,39 @@ func Peek(id string) (*State, error) {
 	}
 	d := &Dir{Root: filepath.Join(base, "devc", id)}
 	return d.Load()
+}
+
+// List returns the state of every workspace that has a state dir, for callers
+// that must find a workspace by something other than its id (e.g. the folder a
+// renamed workspace was brought up from). Unreadable entries are skipped; the
+// ID is filled from the directory name when state.json predates recording it.
+func List() ([]*State, error) {
+	base, err := dataHome()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(filepath.Join(base, "devc"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []*State
+	for _, ent := range entries {
+		if !ent.IsDir() {
+			continue
+		}
+		s, err := (&Dir{Root: filepath.Join(base, "devc", ent.Name())}).Load()
+		if err != nil {
+			continue
+		}
+		if s.ID == "" {
+			s.ID = ent.Name()
+		}
+		out = append(out, s)
+	}
+	return out, nil
 }
 
 // Dir is a workspace's state directory.

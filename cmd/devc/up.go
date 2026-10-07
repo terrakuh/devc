@@ -44,6 +44,10 @@ func runUp(args []string) error {
 		return err
 	}
 
+	// A renamed workspace gets a new id; tear down what the old name left behind
+	// so only the current one remains controllable.
+	retireRenamed(ctx, e)
+
 	// initializeCommand runs on the host, before any container work.
 	if !hf.skip {
 		if err := runInitialize(ctx, e); err != nil {
@@ -158,6 +162,7 @@ func persistCompose(e *env, project string) error {
 	s.ID = e.spec.ID
 	s.Name = e.spec.Name
 	s.LocalFolder = e.spec.LocalWorkspaceFolder
+	s.ConfigPath = e.spec.ConfigPath
 	s.ConfigHash = container.ConfigHash(e.spec)
 	s.ComposeProject = project
 	// s.ContainerID is owned by the hook/probe logic; see persist().
@@ -270,6 +275,7 @@ func persist(e *env) error {
 	s.ID = e.spec.ID
 	s.Name = e.spec.Name
 	s.LocalFolder = e.spec.LocalWorkspaceFolder
+	s.ConfigPath = e.spec.ConfigPath
 	s.ConfigHash = container.ConfigHash(e.spec)
 	return dir.Save(s)
 }
