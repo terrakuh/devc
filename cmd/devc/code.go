@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -24,7 +23,7 @@ var editorCandidates = []string{"codium", "code", "code-insiders"}
 // The editor connects through the ssh alias `devc up` wrote, whose ProxyCommand
 // starts the container on demand, so this works whether or not it is running.
 func runCode(args []string) error {
-	fs := flag.NewFlagSet("code", flag.ContinueOnError)
+	fs := newFlagSet("code")
 	var cf commonFlags
 	editor := fs.String("editor", os.Getenv("DEVC_EDITOR"), "editor launcher to use (default: codium, else code)")
 	cf.register(fs)

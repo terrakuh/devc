@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
 
@@ -16,7 +15,7 @@ import (
 // key material. Rotation invalidates the previous identity; the container must
 // be re-provisioned (via `devc up`) afterward.
 func runKeys(args []string) error {
-	fs := flag.NewFlagSet("keys", flag.ContinueOnError)
+	fs := newFlagSet("keys")
 	var cf commonFlags
 	cf.register(fs)
 	rotate := fs.Bool("rotate", false, "generate fresh keys, discarding the old identity")
@@ -64,7 +63,7 @@ func runKeys(args []string) error {
 // the workspace's ssh config block. Without a running container it still works,
 // producing the block from the spec + existing keys.
 func runSSHConfig(args []string) error {
-	fs := flag.NewFlagSet("ssh-config", flag.ContinueOnError)
+	fs := newFlagSet("ssh-config")
 	var cf commonFlags
 	cf.register(fs)
 	printOnly := fs.Bool("print", false, "print the config instead of writing it")

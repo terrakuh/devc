@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"strconv"
@@ -35,7 +34,7 @@ type check struct {
 // container, and the handful of in-container tools the editor's server installer
 // needs (tar, curl/wget), the libc flavour, $HOME, free space, and the agent.
 func runDoctor(args []string) error {
-	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fs := newFlagSet("doctor")
 	var cf commonFlags
 	jsonOut := fs.Bool("json", false, "emit the checks as JSON")
 	cf.register(fs)

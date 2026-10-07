@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 
@@ -14,7 +13,7 @@ import (
 // (post-substitution) Raw document instead, which is useful for debugging
 // parsing and variable expansion.
 func runConfig(args []string) error {
-	fs := flag.NewFlagSet("config", flag.ContinueOnError)
+	fs := newFlagSet("config")
 	path := fs.String("path", ".", "project directory or path to a devcontainer.json")
 	configFile := fs.String("config", "", "explicit devcontainer.json to use (overrides --path discovery)")
 	raw := fs.Bool("raw", false, "print the decoded Raw config after substitution instead of the resolved Spec")

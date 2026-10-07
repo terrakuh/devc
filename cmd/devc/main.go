@@ -37,6 +37,7 @@ Commands:
   keys        Show or rotate the workspace's SSH keys
   doctor      Diagnose a workspace (runtime, tools, agent) for SSH/editor use
   config      Load and print the resolved devcontainer configuration
+  completion  Print a shell completion script (bash, zsh or fish)
   help        Show this help
 
 Run "devc <command> -h" for command-specific flags.
@@ -89,6 +90,10 @@ func main() {
 		err = runServe(args)
 	case "__sftp":
 		err = runSFTP()
+	case "completion":
+		err = runCompletion(args)
+	case "__complete":
+		err = runComplete(args)
 	case "version":
 		err = runVersion()
 	case "help", "-h", "--help":

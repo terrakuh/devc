@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -16,7 +15,7 @@ import (
 )
 
 func runDown(args []string) error {
-	fs := flag.NewFlagSet("down", flag.ContinueOnError)
+	fs := newFlagSet("down")
 	var cf commonFlags
 	cf.register(fs)
 	volumes := fs.Bool("volumes", false, "also remove named volumes (compose: down --volumes)")
@@ -110,7 +109,7 @@ func runDown(args []string) error {
 }
 
 func runStop(args []string) error {
-	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
+	fs := newFlagSet("stop")
 	var cf commonFlags
 	cf.register(fs)
 	if err := fs.Parse(args); err != nil {
@@ -161,7 +160,7 @@ func stopWorkspace(ctx context.Context, e *env, services []string) error {
 }
 
 func runRestart(args []string) error {
-	fs := flag.NewFlagSet("restart", flag.ContinueOnError)
+	fs := newFlagSet("restart")
 	var cf commonFlags
 	cf.register(fs)
 	all := fs.Bool("all", false, "compose: restart all of the workspace's services, not just the main one")
@@ -233,7 +232,7 @@ type statusReport struct {
 }
 
 func runStatus(args []string) error {
-	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	fs := newFlagSet("status")
 	var cf commonFlags
 	cf.register(fs)
 	jsonOut := fs.Bool("json", false, "emit the status as JSON")
@@ -298,7 +297,7 @@ func runStatus(args []string) error {
 }
 
 func runLogs(args []string) error {
-	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
+	fs := newFlagSet("logs")
 	var cf commonFlags
 	cf.register(fs)
 	follow := fs.Bool("follow", false, "stream new log output")

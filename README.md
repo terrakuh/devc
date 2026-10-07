@@ -40,6 +40,24 @@ The host binary and the container must share a CPU architecture (there is no
 cross-build); `devc doctor` reports a mismatch. Prebuilt static linux binaries
 for amd64 and arm64 are attached to each GitHub release.
 
+### Shell completion
+
+`devc completion <bash|zsh|fish>` prints a completion script. It completes
+commands, flags, flag values (`--runtime`, `--selinux`, paths), workspace names
+for `-n`/`--name`, and compose service names for `up`/`down`/`stop`/`restart`/
+`logs`/`ps`/`exec --service`.
+
+```shell
+# bash (~/.bashrc)
+source <(devc completion bash)
+
+# zsh (~/.zshrc, after compinit)
+source <(devc completion zsh)
+
+# fish
+devc completion fish > ~/.config/fish/completions/devc.fish
+```
+
 ---
 
 ## How SSH works
@@ -85,6 +103,7 @@ Because the binary runs inside an arbitrary image, it **must** be built static
 | `devc keys [--rotate]`           | show or rotate the workspace's SSH keys                                                                                               |
 | `devc doctor [--json]`           | preflight: runtime, container, `tar`/`curl`, libc, `$HOME`, disk, agent                                                               |
 | `devc config [--raw]`            | print the resolved `Spec` (or the post-substitution raw doc)                                                                          |
+| `devc completion <shell>`        | print a bash/zsh/fish completion script (see [Shell completion](#shell-completion))                                                   |
 
 Global flags: `--path`, `-n`/`--name`, `--config`, `--runtime`, `--compose-cmd`,
 `--platform`, `--selinux`, `--userns`, `-q`, `--forward-agent`,

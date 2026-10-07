@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"sort"
@@ -30,7 +29,7 @@ type serviceRow struct {
 // service. `devc list` answers "which workspaces exist on this host"; ps answers
 // "what is this workspace made of, and what is up right now".
 func runPs(args []string) error {
-	fs := flag.NewFlagSet("ps", flag.ContinueOnError)
+	fs := newFlagSet("ps")
 	var cf commonFlags
 	cf.register(fs)
 	jsonOut := fs.Bool("json", false, "emit the rows as JSON")

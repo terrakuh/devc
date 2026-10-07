@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 
@@ -15,7 +14,7 @@ import (
 // configured remoteEnv. A TTY is allocated when stdin is a terminal (unless
 // -T disables it), so both `devc exec -- bash` and piped use work.
 func runExec(args []string) error {
-	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
+	fs := newFlagSet("exec")
 	var cf commonFlags
 	cf.register(fs)
 	noTTY := fs.Bool("T", false, "disable TTY allocation even when stdin is a terminal")

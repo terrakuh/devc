@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -20,7 +19,7 @@ type hookFlags struct {
 }
 
 func runUp(args []string) error {
-	fs := flag.NewFlagSet("up", flag.ContinueOnError)
+	fs := newFlagSet("up")
 	var cf commonFlags
 	cf.register(fs)
 	recreate := fs.Bool("recreate", false, "remove and recreate the container even if it exists")

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"sort"
@@ -25,7 +24,7 @@ type workspaceRow struct {
 // runList implements `devc list`: every workspace devc created, discovered by
 // label - no local index required, so it sees workspaces from any directory.
 func runList(args []string) error {
-	fs := flag.NewFlagSet("list", flag.ContinueOnError)
+	fs := newFlagSet("list")
 	runtimeFlag := fs.String("runtime", "", "container runtime: podman or docker (default: autodetect)")
 	jsonOut := fs.Bool("json", false, "emit the list as JSON")
 	if err := fs.Parse(args); err != nil {

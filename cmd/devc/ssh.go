@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -21,7 +20,7 @@ import (
 // The --stdio form is what the generated ssh config's ProxyCommand runs; it
 // resolves the workspace's container and execs the injected agent over a pipe.
 func runSSH(args []string) error {
-	fs := flag.NewFlagSet("ssh", flag.ContinueOnError)
+	fs := newFlagSet("ssh")
 	var cf commonFlags
 	cf.register(fs)
 	stdio := fs.Bool("stdio", false, "ProxyCommand mode: bridge stdin/stdout to the agent")
