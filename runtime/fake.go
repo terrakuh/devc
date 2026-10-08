@@ -22,6 +22,10 @@ type FakeRunner struct {
 
 	// RunErr, if set, is returned by Run.
 	RunErr error
+
+	// RunFunc, if set, handles a Run call (after it is recorded) instead of
+	// RunErr, e.g. to inspect what was piped to stdin.
+	RunFunc func(args []string, io IO) error
 }
 
 // NewFake returns a FakeRunner named "podman" by default.
@@ -40,8 +44,11 @@ func (f *FakeRunner) record(args []string) {
 	f.Calls = append(f.Calls, cp)
 }
 
-func (f *FakeRunner) Run(_ context.Context, args []string, _ IO) error {
+func (f *FakeRunner) Run(_ context.Context, args []string, io IO) error {
 	f.record(args)
+	if f.RunFunc != nil {
+		return f.RunFunc(args, io)
+	}
 	return f.RunErr
 }
 

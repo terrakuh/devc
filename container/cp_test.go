@@ -1,9 +1,15 @@
 package container
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -57,62 +63,147 @@ func TestAgentServeArgs(t *testing.T) {
 	assert.Contains(t, fwd, "--forward-agent")
 }
 
-func TestInjectArchMismatch(t *testing.T) {
-	f := runtime.NewFake()
-	f.OutputFunc = func(args []string) ([]byte, error) {
-		if len(args) >= 3 && args[0] == "exec" && args[2] == "uname" {
-			return []byte("aarch64\n"), nil
-		}
-		return nil, nil
-	}
-	err := Inject(context.Background(), f, InjectOptions{Container: "c", HostArch: "amd64"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "does not match")
+// fakeContainer backs a FakeRunner with a host directory standing in for the
+// container's AgentDir: Inject's in-container scripts run under the host's sh
+// (with a stub uname reporting arch) and `cp` copies into the directory, so the
+// scripts themselves are exercised, not just the argv.
+type fakeContainer struct {
+	f    *runtime.FakeRunner
+	root string // stands in for AgentDir
 }
 
-func TestInjectHappyPath(t *testing.T) {
-	// Real host files for the binary + keys the copy step stats.
-	dir := t.TempDir()
-	agentBin := filepath.Join(dir, "devc")
-	hostKey := filepath.Join(dir, "host_key")
-	authKey := filepath.Join(dir, "auth.pub")
-	for _, p := range []string{agentBin, hostKey, authKey} {
-		require.NoError(t, os.WriteFile(p, []byte("x"), 0o600))
-	}
+func newFakeContainer(t *testing.T, arch string) *fakeContainer {
+	t.Helper()
+	c := &fakeContainer{f: runtime.NewFake(), root: filepath.Join(t.TempDir(), "devc")}
+	bin := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "uname"), []byte("#!/bin/sh\necho "+arch+"\n"), 0o755))
 
-	f := runtime.NewFake()
-	f.OutputFunc = func(args []string) ([]byte, error) {
-		switch {
-		case len(args) >= 3 && args[0] == "exec" && args[2] == "uname":
-			return []byte("x86_64\n"), nil
-		case len(args) >= 4 && args[0] == "exec" && args[3] == "version":
-			return []byte("old-version\n"), nil // forces a fresh copy
-		default:
-			return nil, nil
+	runScript := func(args []string, stdin io.Reader) ([]byte, error) {
+		i := slices.Index(args, "-c")
+		require.Positive(t, i)
+		prefix := slices.DeleteFunc(slices.Clone(args[1:i]), func(a string) bool { return a == "--interactive" })
+		require.Equal(t, []string{"--user", "0", "ctr", "sh"}, prefix, "runs sh as root")
+		rest := slices.Clone(args[i+2:])
+		for j, a := range rest {
+			if a == AgentDir {
+				rest[j] = c.root
+			}
 		}
+		cmd := exec.Command("sh", append([]string{"-c", args[i+1]}, rest...)...)
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+		cmd.Stdin = stdin
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		if err != nil {
+			return out, fmt.Errorf("%w: %s", err, stderr.String())
+		}
+		return out, nil
 	}
-	err := Inject(context.Background(), f, InjectOptions{
-		Container:         "ctr",
-		AgentSource:       agentBin,
-		HostArch:          "amd64",
-		Version:           "0.1.0",
-		HostKeyFile:       hostKey,
-		AuthorizedKeyFile: authKey,
-		Env:               map[string]string{"FOO": "bar"},
-	})
-	require.NoError(t, err)
+	c.f.OutputFunc = func(args []string) ([]byte, error) {
+		switch args[0] {
+		case "exec":
+			return runScript(args, nil)
+		case "cp":
+			dest, ok := strings.CutPrefix(args[2], "ctr:"+AgentDir+"/")
+			require.True(t, ok, "cp target %q", args[2])
+			b, err := os.ReadFile(args[1])
+			require.NoError(t, err)
+			st, err := os.Stat(args[1])
+			require.NoError(t, err)
+			return nil, os.WriteFile(filepath.Join(c.root, dest), b, st.Mode().Perm())
+		}
+		t.Fatalf("unexpected runtime call %v", args)
+		return nil, nil
+	}
+	c.f.RunFunc = func(args []string, rio runtime.IO) error {
+		_, err := runScript(args, rio.Stdin)
+		return err
+	}
+	return c
+}
 
-	calls := f.CallStrings()
-	joined := strings.Join(calls, "\n")
-	// Binary and both key files are copied to the agent dir.
-	assert.Contains(t, joined, "cp "+agentBin+" ctr:"+AgentBinary)
-	assert.Contains(t, joined, "cp "+hostKey+" ctr:"+AgentHostKey)
-	assert.Contains(t, joined, "cp "+authKey+" ctr:"+AgentAuthKey)
-	// Permissions are tightened, as root.
-	assert.Contains(t, joined, "exec --user 0 ctr chmod 0755 "+AgentBinary)
-	assert.Contains(t, joined, "exec --user 0 ctr chmod 0600 "+AgentHostKey)
-	// Env file is written via a piped cat.
-	assert.Contains(t, joined, "cat > "+AgentEnvFile)
+// verbs lists the runtime subcommand of every call made, in order.
+func (c *fakeContainer) verbs() []string {
+	var out []string
+	for _, call := range c.f.Calls {
+		out = append(out, call[0])
+	}
+	return out
+}
+
+func (c *fakeContainer) file(t *testing.T, name string) (string, os.FileMode) {
+	t.Helper()
+	p := filepath.Join(c.root, name)
+	b, err := os.ReadFile(p)
+	require.NoError(t, err)
+	st, err := os.Stat(p)
+	require.NoError(t, err)
+	return string(b), st.Mode().Perm()
+}
+
+// injectFixture writes the host files Inject reads: an agent binary (a script
+// answering `version`) and the two keys.
+func injectFixture(t *testing.T, agentVersion string) InjectOptions {
+	t.Helper()
+	dir := t.TempDir()
+	opts := InjectOptions{
+		Container:         "ctr",
+		AgentSource:       filepath.Join(dir, "devc"),
+		HostArch:          "amd64",
+		Version:           agentVersion,
+		HostKeyFile:       filepath.Join(dir, "host_key"),
+		AuthorizedKeyFile: filepath.Join(dir, "auth.pub"),
+		Env:               map[string]string{"SECRET": "s3cret", "A": "multi\nline"},
+	}
+	require.NoError(t, os.WriteFile(opts.AgentSource, []byte("#!/bin/sh\necho "+agentVersion+"\n"), 0o755))
+	require.NoError(t, os.WriteFile(opts.HostKeyFile, []byte("-----BEGIN KEY-----\nhost\n-----END KEY-----\n"), 0o600))
+	require.NoError(t, os.WriteFile(opts.AuthorizedKeyFile, []byte("ssh-ed25519 AAAA client\n"), 0o644))
+	return opts
+}
+
+func TestInjectArchMismatch(t *testing.T) {
+	c := newFakeContainer(t, "aarch64")
+	err := Inject(context.Background(), c.f, injectFixture(t, "0.1.0"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not match")
+	assert.Equal(t, []string{"exec"}, c.verbs(), "nothing is copied into a mismatched container")
+}
+
+func TestInjectFreshContainer(t *testing.T) {
+	c := newFakeContainer(t, "x86_64")
+	opts := injectFixture(t, "0.1.0")
+	require.NoError(t, Inject(context.Background(), c.f, opts))
+
+	// Prepare, copy the binary, write the secrets: three runtime calls in all.
+	assert.Equal(t, []string{"exec", "cp", "exec"}, c.verbs())
+	assert.Equal(t, "cp "+opts.AgentSource+" ctr:"+AgentBinary, c.f.CallStrings()[1])
+
+	st, err := os.Stat(c.root)
+	require.NoError(t, err)
+	assert.Equal(t, AgentDirMode, fmt.Sprintf("%04o", st.Mode().Perm()))
+
+	_, mode := c.file(t, filepath.Base(AgentBinary))
+	assert.Equal(t, os.FileMode(0o755), mode)
+	hostKey, mode := c.file(t, filepath.Base(AgentHostKey))
+	assert.Equal(t, "-----BEGIN KEY-----\nhost\n-----END KEY-----\n", hostKey)
+	assert.Equal(t, os.FileMode(0o600), mode)
+	authKey, mode := c.file(t, filepath.Base(AgentAuthKey))
+	assert.Equal(t, "ssh-ed25519 AAAA client\n", authKey)
+	assert.Equal(t, os.FileMode(0o600), mode)
+	env, mode := c.file(t, filepath.Base(AgentEnvFile))
+	assert.Equal(t, "A=multi line\nSECRET=s3cret\n", env)
+	assert.Equal(t, os.FileMode(0o600), mode)
+}
+
+// TestInjectSecretsStayOffArgv: remoteEnv can carry tokens, and argv is
+// visible to every process on the host and in the container.
+func TestInjectSecretsStayOffArgv(t *testing.T) {
+	c := newFakeContainer(t, "x86_64")
+	require.NoError(t, Inject(context.Background(), c.f, injectFixture(t, "0.1.0")))
+	joined := strings.Join(c.f.CallStrings(), "\n")
+	assert.NotContains(t, joined, "s3cret")
+	assert.NotContains(t, joined, "BEGIN KEY")
 }
 
 // TestInjectAgentDirIsTraversable pins the mode the SFTP subsystem needs to
@@ -124,61 +215,36 @@ func TestInjectAgentDirIsTraversable(t *testing.T) {
 	assert.NotZero(t, mode&0o001, "AgentDir must stay world-traversable (--x)")
 }
 
-// TestInjectSecretsAreRootOnly: AgentDir is traversable, so the secrets inside
-// need their own 0600.
-func TestInjectSecretsAreRootOnly(t *testing.T) {
-	dir := t.TempDir()
-	agentBin := filepath.Join(dir, "devc")
-	hostKey := filepath.Join(dir, "host_key")
-	authKey := filepath.Join(dir, "auth.pub")
-	for _, p := range []string{agentBin, hostKey, authKey} {
-		require.NoError(t, os.WriteFile(p, []byte("x"), 0o600))
-	}
+func TestInjectSkipsCopyWhenUpToDate(t *testing.T) {
+	c := newFakeContainer(t, "x86_64")
+	opts := injectFixture(t, "0.1.0")
+	require.NoError(t, Inject(context.Background(), c.f, opts))
+	c.f.Calls = nil
 
-	f := runtime.NewFake()
-	f.OutputFunc = func(args []string) ([]byte, error) {
-		if len(args) >= 3 && args[0] == "exec" && args[2] == "uname" {
-			return []byte("x86_64\n"), nil
-		}
-		return nil, nil
-	}
-	require.NoError(t, Inject(context.Background(), f, InjectOptions{
-		Container: "ctr", AgentSource: agentBin, HostArch: "amd64",
-		HostKeyFile: hostKey, AuthorizedKeyFile: authKey,
-		Env: map[string]string{"SECRET": "s3cret"},
-	}))
-
-	joined := strings.Join(f.CallStrings(), "\n")
-	assert.Contains(t, joined, "exec --user 0 ctr chmod "+AgentDirMode+" "+AgentDir)
-	assert.Contains(t, joined, "exec --user 0 ctr chmod 0600 "+AgentHostKey)
-	assert.Contains(t, joined, "exec --user 0 ctr chmod 0600 "+AgentAuthKey)
-	assert.Contains(t, joined, "exec --user 0 ctr chmod 0600 "+AgentEnvFile)
+	require.NoError(t, Inject(context.Background(), c.f, opts))
+	assert.Equal(t, []string{"exec", "exec"}, c.verbs(), "binary copy is skipped when the version matches")
 }
 
-func TestInjectSkipsCopyWhenUpToDate(t *testing.T) {
-	dir := t.TempDir()
-	for _, n := range []string{"devc", "hk", "ak"} {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o600))
+func TestInjectReplacesOutdatedAgentAndLooseSecrets(t *testing.T) {
+	c := newFakeContainer(t, "x86_64")
+	require.NoError(t, Inject(context.Background(), c.f, injectFixture(t, "0.0.9")))
+	// An older devc left a world-readable env file behind.
+	require.NoError(t, os.Chmod(filepath.Join(c.root, "env"), 0o644))
+	c.f.Calls = nil
+
+	require.NoError(t, Inject(context.Background(), c.f, injectFixture(t, "0.1.0")))
+	assert.Equal(t, []string{"exec", "cp", "exec"}, c.verbs())
+	_, mode := c.file(t, "env")
+	assert.Equal(t, os.FileMode(0o600), mode)
+}
+
+func TestInjectReportsSecretsFailure(t *testing.T) {
+	c := newFakeContainer(t, "x86_64")
+	c.f.RunFunc = func([]string, runtime.IO) error {
+		return errors.New("exit status 1")
 	}
-	f := runtime.NewFake()
-	f.OutputFunc = func(args []string) ([]byte, error) {
-		switch {
-		case len(args) >= 3 && args[0] == "exec" && args[2] == "uname":
-			return []byte("x86_64\n"), nil
-		case len(args) >= 4 && args[0] == "exec" && args[3] == "version":
-			return []byte("0.1.0\n"), nil // matches => skip binary copy
-		default:
-			return nil, nil
-		}
-	}
-	err := Inject(context.Background(), f, InjectOptions{
-		Container: "ctr", AgentSource: filepath.Join(dir, "devc"), HostArch: "amd64", Version: "0.1.0",
-		HostKeyFile: filepath.Join(dir, "hk"), AuthorizedKeyFile: filepath.Join(dir, "ak"),
-	})
-	require.NoError(t, err)
-	joined := strings.Join(f.CallStrings(), "\n")
-	assert.NotContains(t, joined, "cp "+filepath.Join(dir, "devc")+" ctr:"+AgentBinary,
-		"binary copy should be skipped when version matches")
+	err := Inject(context.Background(), c.f, injectFixture(t, "0.1.0"))
+	assert.ErrorContains(t, err, "write agent credentials")
 }
 
 func indexOf(s []string, v string) int {

@@ -1,10 +1,12 @@
 package container
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/terrakuh/devc/runtime"
@@ -53,51 +55,64 @@ type InjectOptions struct {
 // It skips the (large) binary copy when the container already runs the expected
 // version. Keys and env are always refreshed (cheap, and keeps rotation simple).
 //
+// Every runtime call costs tens to hundreds of milliseconds (an exec more than
+// most), so the work is batched into at most three: one exec that prepares
+// AgentDir and reports the architecture and installed agent version, a cp of
+// the binary when it is outdated, and one exec that writes the secrets from
+// stdin (never argv, which `ps` would show).
+//
 // All in-container steps run as root (--user 0): /.devc lives at the filesystem
 // root and the agent must be able to drop privileges to the session user, so
 // setup cannot depend on the container's default exec user (which, e.g. under
 // --userns=keep-id, is unprivileged).
 func Inject(ctx context.Context, r runtime.Runner, opts InjectOptions) error {
-	if err := ensureArch(ctx, r, opts.Container, opts.HostArch); err != nil {
-		return err
+	out, err := r.Output(ctx, rootExec(opts.Container, "sh", "-c", prepareScript, "sh", AgentDir, AgentDirMode)...)
+	if err != nil {
+		return fmt.Errorf("prepare %s: %w", AgentDir, err)
 	}
-	if _, err := r.Output(ctx, rootExec(opts.Container, "mkdir", "-p", AgentDir)...); err != nil {
-		return fmt.Errorf("create %s: %w", AgentDir, err)
-	}
-	if _, err := r.Output(ctx, rootExec(opts.Container, "chmod", AgentDirMode, AgentDir)...); err != nil {
+	arch, installed, _ := strings.Cut(string(out), "\n")
+	if err := checkArch(strings.TrimSpace(arch), opts.HostArch); err != nil {
 		return err
 	}
 
-	if !agentUpToDate(ctx, r, opts.Container, opts.Version) {
+	if opts.Version == "" || strings.TrimSpace(installed) != opts.Version {
 		if err := cpInto(ctx, r, opts.AgentSource, opts.Container, AgentBinary); err != nil {
 			return fmt.Errorf("copy agent binary: %w", err)
 		}
-		if _, err := r.Output(ctx, rootExec(opts.Container, "chmod", "0755", AgentBinary)...); err != nil {
-			return err
-		}
 	}
 
-	if err := cpInto(ctx, r, opts.HostKeyFile, opts.Container, AgentHostKey); err != nil {
-		return fmt.Errorf("copy host key: %w", err)
-	}
-	if _, err := r.Output(ctx, rootExec(opts.Container, "chmod", "0600", AgentHostKey)...); err != nil {
-		return err
-	}
-	if err := cpInto(ctx, r, opts.AuthorizedKeyFile, opts.Container, AgentAuthKey); err != nil {
-		return fmt.Errorf("copy authorized key: %w", err)
-	}
-	if _, err := r.Output(ctx, rootExec(opts.Container, "chmod", "0600", AgentAuthKey)...); err != nil {
-		return err
-	}
-	if err := writeEnvFile(ctx, r, opts.Container, opts.Env); err != nil {
-		return fmt.Errorf("write env file: %w", err)
-	}
-	// remoteEnv can carry tokens, and AgentDir no longer hides it.
-	if _, err := r.Output(ctx, rootExec(opts.Container, "chmod", "0600", AgentEnvFile)...); err != nil {
-		return err
+	if err := writeSecrets(ctx, r, opts); err != nil {
+		return fmt.Errorf("write agent credentials: %w", err)
 	}
 	return nil
 }
+
+// prepareScript creates AgentDir ($1) with mode $2, then prints `uname -m` and
+// the installed agent's version (an empty line when there is none yet, or it
+// cannot run - e.g. built for another architecture).
+const prepareScript = `set -e
+uname -m
+mkdir -p "$1"
+chmod "$2" "$1"
+"$1/agent" version 2>/dev/null || echo`
+
+// secretsScript installs the files streamed on stdin into AgentDir ($1): the
+// host key, the authorized key and the env file, whose byte sizes are $2, $3
+// and $4. dd reads one byte at a time because it shares the pipe: head -c or a
+// block read may consume bytes that belong to the next file. Each is written to
+// a temp file under umask 077 and renamed into place, so it is root-owned 0600
+// even if an older copy had other owners or modes. The binary is (re)made
+// executable in the same exec.
+const secretsScript = `set -e
+umask 077
+cd "$1"
+chmod 0755 agent
+for f in host_key:$2 authorized_key:$3 env:$4; do
+	name=${f%%:*}
+	dd bs=1 count="${f#*:}" of="$name.tmp" 2>/dev/null
+	chmod 0600 "$name.tmp"
+	mv -f "$name.tmp" "$name"
+done`
 
 // rootExec builds an `exec --user 0 <container> <cmd...>` argv.
 func rootExec(containerRef string, cmd ...string) []string {
@@ -105,13 +120,9 @@ func rootExec(containerRef string, cmd ...string) []string {
 	return append(args, cmd...)
 }
 
-// ensureArch verifies the container's architecture matches the agent binary's.
-func ensureArch(ctx context.Context, r runtime.Runner, containerRef, hostArch string) error {
-	out, err := r.Output(ctx, "exec", containerRef, "uname", "-m")
-	if err != nil {
-		return fmt.Errorf("detect container architecture: %w", err)
-	}
-	ctrArch := normalizeArch(strings.TrimSpace(string(out)))
+// checkArch verifies the container's architecture (uname -m) matches the agent binary's.
+func checkArch(uname, hostArch string) error {
+	ctrArch := normalizeArch(uname)
 	if hostArch != "" && ctrArch != "" && ctrArch != hostArch {
 		return fmt.Errorf("container architecture %q does not match the devc binary (%q); cross-architecture agent injection is not supported yet; run devc on a %s host or build a matching binary", ctrArch, hostArch, ctrArch)
 	}
@@ -132,19 +143,8 @@ func normalizeArch(m string) string {
 	}
 }
 
-// agentUpToDate reports whether the installed agent already reports version.
-func agentUpToDate(ctx context.Context, r runtime.Runner, containerRef, version string) bool {
-	if version == "" {
-		return false
-	}
-	out, err := r.Output(ctx, "exec", containerRef, AgentBinary, "version")
-	if err != nil {
-		return false
-	}
-	return strings.TrimSpace(string(out)) == version
-}
-
-// cpInto copies a host file to dest inside the container via `<runtime> cp`.
+// cpInto copies a host file to dest inside the container via `<runtime> cp`,
+// which keeps the file's mode.
 func cpInto(ctx context.Context, r runtime.Runner, src, containerRef, dest string) error {
 	if _, err := os.Stat(src); err != nil {
 		return fmt.Errorf("source %s: %w", src, err)
@@ -153,9 +153,37 @@ func cpInto(ctx context.Context, r runtime.Runner, src, containerRef, dest strin
 	return err
 }
 
-// writeEnvFile writes the KEY=VALUE env file into the container by piping the
-// content to `sh -c 'cat > file'`, avoiding a host temp file.
-func writeEnvFile(ctx context.Context, r runtime.Runner, containerRef string, env map[string]string) error {
+// writeSecrets streams the host key, the authorized key and the env file into
+// the container in a single exec (see secretsScript).
+func writeSecrets(ctx context.Context, r runtime.Runner, opts InjectOptions) error {
+	hostKey, err := os.ReadFile(opts.HostKeyFile)
+	if err != nil {
+		return err
+	}
+	authKey, err := os.ReadFile(opts.AuthorizedKeyFile)
+	if err != nil {
+		return err
+	}
+	env := envFile(opts.Env)
+
+	var stdin bytes.Buffer
+	stdin.Write(hostKey)
+	stdin.Write(authKey)
+	stdin.WriteString(env)
+	var stderr bytes.Buffer
+	argv := []string{"exec", "--interactive", "--user", "0", opts.Container, "sh", "-c", secretsScript, "sh", AgentDir,
+		strconv.Itoa(len(hostKey)), strconv.Itoa(len(authKey)), strconv.Itoa(len(env))}
+	if err := r.Run(ctx, argv, runtime.IO{Stdin: &stdin, Stderr: &stderr}); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("%w: %s", err, msg)
+		}
+		return err
+	}
+	return nil
+}
+
+// envFile renders env as the agent's KEY=VALUE env file, sorted by key.
+func envFile(env map[string]string) string {
 	var b strings.Builder
 	keys := make([]string, 0, len(env))
 	for k := range env {
@@ -167,8 +195,7 @@ func writeEnvFile(ctx context.Context, r runtime.Runner, containerRef string, en
 		// vars rarely contain them and the ssh env channel can't either).
 		fmt.Fprintf(&b, "%s=%s\n", k, strings.ReplaceAll(env[k], "\n", " "))
 	}
-	io := runtime.IO{Stdin: strings.NewReader(b.String())}
-	return r.Run(ctx, []string{"exec", "--interactive", "--user", "0", containerRef, "sh", "-c", "cat > " + AgentEnvFile}, io)
+	return b.String()
 }
 
 // AgentServeArgs builds the argv that runs the injected agent as an SSH server
