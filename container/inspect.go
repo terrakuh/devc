@@ -2,7 +2,9 @@ package container
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/terrakuh/devc/runtime"
@@ -63,18 +65,29 @@ func Find(ctx context.Context, r runtime.Runner, name string) (*Info, error) {
 // container that disappears between the `ps` and its `inspect` is skipped rather
 // than failing the whole enumeration.
 func List(ctx context.Context, r runtime.Runner) ([]*Info, error) {
-	var infos []*Info
-
-	single, err := listByLabel(ctx, r, LabelID)
+	singleIDs, err := psByLabel(ctx, r, LabelID)
 	if err != nil {
 		return nil, err
 	}
-	infos = append(infos, single...)
-
-	composeContainers, err := listByLabel(ctx, r, LabelComposeProject)
+	composeIDs, err := psByLabel(ctx, r, LabelComposeProject)
 	if err != nil {
 		return nil, err
 	}
+	// One inspect for both sets: every runtime invocation costs tens of
+	// milliseconds, which shell completion of -n/--name feels.
+	all, err := inspectAll(ctx, r, append(singleIDs, composeIDs...))
+	if err != nil {
+		return nil, err
+	}
+	var infos, composeContainers []*Info
+	for _, info := range all {
+		if info.Config.Labels[LabelID] != "" {
+			infos = append(infos, info)
+		} else if info.Config.Labels[LabelComposeProject] != "" {
+			composeContainers = append(composeContainers, info)
+		}
+	}
+
 	// Collapse each devc compose project's service containers into a single row,
 	// keyed by workspace id. The row reports "running" when any service is up.
 	byID := map[string]*Info{}
@@ -112,17 +125,52 @@ func composeRow(id string, c *Info) *Info {
 // listByLabel returns the Info for every container carrying the given label key,
 // skipping any that vanish between the `ps` and their `inspect`.
 func listByLabel(ctx context.Context, r runtime.Runner, label string) ([]*Info, error) {
+	ids, err := psByLabel(ctx, r, label)
+	if err != nil {
+		return nil, err
+	}
+	return inspectAll(ctx, r, ids)
+}
+
+// psByLabel returns the ids of every container (running or not) carrying label.
+func psByLabel(ctx context.Context, r runtime.Runner, label string) ([]string, error) {
 	out, err := r.Output(ctx, "ps", "--all", "--filter", "label="+label, "--format", "{{.ID}}")
 	if err != nil {
 		return nil, err
 	}
+	return nonEmptyLines(string(out)), nil
+}
+
+// inspectAll inspects the given containers in a single runtime call, one JSON
+// object per output line. Duplicate ids are inspected once. A container that
+// vanished since it was listed is skipped: podman and docker still print the
+// others and only fail with "no such object" for the missing one.
+func inspectAll(ctx context.Context, r runtime.Runner, ids []string) ([]*Info, error) {
+	seen := map[string]bool{}
+	args := []string{"inspect", "--format", "{{json .}}"}
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			args = append(args, id)
+		}
+	}
+	if len(seen) == 0 {
+		return nil, nil
+	}
+	out, err := r.Output(ctx, args...)
+	if err != nil && !runtime.IsNoSuchObject(err) {
+		return nil, err
+	}
 	var infos []*Info
-	for _, id := range nonEmptyLines(string(out)) {
-		info, err := Find(ctx, r, id)
-		if err != nil || info == nil {
+	for _, line := range nonEmptyLines(string(out)) {
+		if line == "null" {
 			continue
 		}
-		infos = append(infos, info)
+		var info Info
+		if err := json.Unmarshal([]byte(line), &info); err != nil {
+			return nil, fmt.Errorf("decode inspect output: %w", err)
+		}
+		infos = append(infos, &info)
 	}
 	return infos, nil
 }

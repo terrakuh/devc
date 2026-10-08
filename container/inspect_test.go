@@ -3,6 +3,9 @@ package container
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,13 +33,7 @@ func TestListEnumeratesLabelledContainers(t *testing.T) {
 		if len(args) > 0 && args[0] == "ps" {
 			return []byte("id-one\nid-two\n"), nil
 		}
-		// inspect --format {{json .}} <ref>
-		ref := args[len(args)-1]
-		info, ok := byID[ref]
-		if !ok {
-			return nil, nil // triggers ErrNoSuchObject; List skips it
-		}
-		return json.Marshal(info)
+		return fakeInspect(t, args, byID)
 	}
 
 	infos, err := List(context.Background(), f)
@@ -81,16 +78,19 @@ func TestListCollapsesComposeProject(t *testing.T) {
 			}
 			return []byte("single\n"), nil // the LabelID query
 		}
-		ref := args[len(args)-1]
-		info, ok := byID[ref]
-		if !ok {
-			return nil, nil
-		}
-		return json.Marshal(info)
+		return fakeInspect(t, args, byID)
 	}
 
 	infos, err := List(context.Background(), f)
 	require.NoError(t, err)
+	// Every container is inspected in one runtime call, however many there are.
+	var inspects []string
+	for _, c := range f.CallStrings() {
+		if strings.HasPrefix(c, "inspect ") {
+			inspects = append(inspects, c)
+		}
+	}
+	assert.Equal(t, []string{"inspect --format {{json .}} single web-db web-app"}, inspects)
 	require.Len(t, infos, 2, "compose project collapses to one row alongside the single container")
 
 	var compose *Info
@@ -103,6 +103,27 @@ func TestListCollapsesComposeProject(t *testing.T) {
 	assert.True(t, compose.Running(), "row is running because a service is up despite db being exited")
 	assert.Empty(t, compose.Config.Labels[LabelName], "name is the caller's to backfill")
 	assert.Empty(t, compose.Config.Labels[LabelLocal], "compose containers carry no folder label")
+}
+
+// fakeInspect answers a batched `inspect --format {{json .}} <ref>...` the way
+// podman and docker do: one JSON line per known ref, and a "no such object"
+// failure if any ref is unknown.
+func fakeInspect(t *testing.T, args []string, byID map[string]Info) ([]byte, error) {
+	t.Helper()
+	require.Equal(t, []string{"inspect", "--format", "{{json .}}"}, args[:3])
+	var out []byte
+	var err error
+	for _, ref := range args[3:] {
+		info, ok := byID[ref]
+		if !ok {
+			err = fmt.Errorf("Error: no such object: %q", ref)
+			continue
+		}
+		b, mErr := json.Marshal(info)
+		require.NoError(t, mErr)
+		out = append(append(out, b...), '\n')
+	}
+	return out, err
 }
 
 func containsArg(args []string, want string) bool {
@@ -118,11 +139,37 @@ func TestListSkipsVanishedContainers(t *testing.T) {
 	f := runtime.NewFake()
 	f.OutputFunc = func(args []string) ([]byte, error) {
 		if len(args) > 0 && args[0] == "ps" {
-			return []byte("ghost\n"), nil
+			if containsArg(args, "label="+LabelID) {
+				return []byte("ghost\nalive\n"), nil
+			}
+			return nil, nil
 		}
-		return nil, nil // inspect finds nothing -> ErrNoSuchObject
+		return fakeInspect(t, args, map[string]Info{
+			"alive": {ID: "alive", Config: ContainerConfig{Labels: map[string]string{LabelID: "alive-1111"}}},
+		})
 	}
 	infos, err := List(context.Background(), f)
 	require.NoError(t, err)
+	require.Len(t, infos, 1)
+	assert.Equal(t, "alive", infos[0].ID)
+}
+
+func TestListPropagatesInspectFailure(t *testing.T) {
+	f := runtime.NewFake()
+	f.OutputFunc = func(args []string) ([]byte, error) {
+		if args[0] == "ps" {
+			return []byte("one\n"), nil
+		}
+		return nil, errors.New("cannot connect to the daemon")
+	}
+	_, err := List(context.Background(), f)
+	assert.ErrorContains(t, err, "cannot connect")
+}
+
+func TestListWithoutContainersSkipsInspect(t *testing.T) {
+	f := runtime.NewFake()
+	infos, err := List(context.Background(), f)
+	require.NoError(t, err)
 	assert.Empty(t, infos)
+	assert.Nil(t, f.FindCall("inspect"))
 }

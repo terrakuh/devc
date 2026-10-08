@@ -188,11 +188,11 @@ func TestListComposeProject(t *testing.T) {
 			assert.Contains(t, args, "label="+LabelComposeProject+"=p")
 			return []byte("ctr-b\nctr-a\n"), nil
 		case "inspect":
-			svc := map[string]string{"ctr-a": "workspace", "ctr-b": "db"}[args[len(args)-1]]
-			return json.Marshal(Info{
-				ID:     args[len(args)-1],
-				Config: ContainerConfig{Labels: map[string]string{LabelComposeService: svc}},
-			})
+			byID := map[string]Info{}
+			for id, svc := range map[string]string{"ctr-a": "workspace", "ctr-b": "db"} {
+				byID[id] = Info{ID: id, Config: ContainerConfig{Labels: map[string]string{LabelComposeService: svc}}}
+			}
+			return fakeInspect(t, args, byID)
 		}
 		return nil, nil
 	}

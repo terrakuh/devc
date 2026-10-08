@@ -127,6 +127,10 @@ func (r *CLIRunner) Inspect(ctx context.Context, ref string, v any) error {
 	return nil
 }
 
+// IsNoSuchObject reports whether err from Output is the runtime's "not found"
+// message (podman and docker alike), e.g. for an inspect of a vanished container.
+func IsNoSuchObject(err error) bool { return isNoSuchObject(err) }
+
 // isNoSuchObject recognizes the "not found" message from both podman and docker.
 func isNoSuchObject(err error) bool {
 	s := strings.ToLower(err.Error())
