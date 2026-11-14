@@ -87,7 +87,7 @@ Because the binary runs inside an arbitrary image, it **must** be built static
 
 | Command                          | What it does                                                                                                                          |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `devc up [service...]`           | build/start, inject the agent, run hooks, write ssh config. Flags: `--recreate`, `--rebuild`, `--code` (open editor once up), `--editor <bin>`, `--skip-hooks`, `--rerun-hooks` |
+| `devc up [service...]`           | build/start, inject the agent, run hooks, write ssh config. Flags: `--recreate`, `--rebuild`, `--code` (open editor once up), `--ssh` (open a shell once up), `--editor <bin>`, `--skip-hooks`, `--rerun-hooks` |
 | `devc down [service...]`         | remove the container(s). `--volumes` (compose), `--purge` (also drop keys, ssh block, control dir), `--auto` (honor `shutdownAction`) |
 | `devc stop [service...]`         | stop without removing                                                                                                                 |
 | `devc restart [--all] [service...]` | restart the main service (compose: just the attach service; `--all` restarts every service)                                        |

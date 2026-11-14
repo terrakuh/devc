@@ -26,6 +26,7 @@ func runUp(args []string) error {
 	rebuild := fs.Bool("rebuild", false, "rebuild the image and recreate the container (implies --recreate)")
 	code := fs.Bool("code", false, "open the workspace in VSCodium/VS Code once it is up")
 	editor := fs.String("editor", os.Getenv("DEVC_EDITOR"), "editor launcher for --code (default: codium, else code)")
+	sshIn := fs.Bool("ssh", false, "open an ssh shell in the workspace once it is up")
 	hf := hookFlags{}
 	fs.BoolVar(&hf.skip, "skip-hooks", false, "do not run lifecycle hooks")
 	fs.BoolVar(&hf.rerun, "rerun-hooks", false, "re-run create hooks even if already run for this container")
@@ -65,12 +66,22 @@ func runUp(args []string) error {
 		return err
 	}
 
+	if !*code && !*sshIn {
+		return nil
+	}
+	if !attached {
+		fmt.Fprintf(os.Stderr, "warning: --code/--ssh need the workspace service %q, which was not brought up; skipping\n", e.spec.Compose.Service)
+		return nil
+	}
+	// The editor launcher returns promptly, so it goes first; the ssh shell
+	// then holds the terminal until the user exits.
 	if *code {
-		if !attached {
-			fmt.Fprintf(os.Stderr, "warning: --code needs the workspace service %q, which was not brought up; skipping the editor\n", e.spec.Compose.Service)
-			return nil
+		if err := launchEditor(e, *editor, cf.quiet); err != nil {
+			return err
 		}
-		return launchEditor(e, *editor, cf.quiet)
+	}
+	if *sshIn {
+		return sshSpawn(e)
 	}
 	return nil
 }
