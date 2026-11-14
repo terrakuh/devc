@@ -54,7 +54,8 @@ part of the fragment and end up in the output: they carry the "why".
   order.
 - **devcontainer.jsonc:** objects merge key by key, arrays are concatenated
   without duplicates, and two blocks setting the same scalar to different values
-  is an error.
+  is an error. When two blocks fill the same key, the comments above
+  that key move down to the first entry each block added.
 - **post-create.sh:** if any block has one, `postCreateCommand` is set to
   `.devcontainer/post-create.sh`. Fragments run in dependency order in one
   script with `set -euo pipefail`, from the workspace folder. Each fragment must be

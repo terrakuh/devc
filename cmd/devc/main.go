@@ -22,6 +22,7 @@ Usage:
   devc <command> [flags] [service...]
 
 Commands:
+  init        Create .devcontainer/ from building blocks (interactive)
   up          Create/start the workspace container(s)
   down        Remove the workspace container(s)
   stop        Stop the workspace without removing it
@@ -58,6 +59,8 @@ func main() {
 	switch cmd {
 	case "config":
 		err = runConfig(args)
+	case "init":
+		err = runInit(args)
 	case "up":
 		err = runUp(args)
 	case "down":

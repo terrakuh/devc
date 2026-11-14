@@ -87,6 +87,7 @@ Because the binary runs inside an arbitrary image, it **must** be built static
 
 | Command                          | What it does                                                                                                                          |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `devc init`                      | create `.devcontainer/` from building blocks; asks interactively, or `--preset`, `--with a,b`, `--without`, `--set block.param=value`, `--list`, `--print`, `--force`. See [Creating a devcontainer](#creating-a-devcontainer) |
 | `devc up [service...]`           | build/start, inject the agent, run hooks, write ssh config. Flags: `--recreate`, `--rebuild`, `--code` (open editor once up), `--ssh` (open a shell once up), `--editor <bin>`, `--skip-hooks`, `--rerun-hooks` |
 | `devc down [service...]`         | remove the container(s). `--volumes` (compose), `--purge` (also drop keys, ssh block, control dir), `--auto` (honor `shutdownAction`) |
 | `devc stop [service...]`         | stop without removing                                                                                                                 |
@@ -161,6 +162,25 @@ workspace's identity:
 - `devc exec --service <s>` runs plainly in that container: `remoteUser`, the
   workspace folder and `remoteEnv` describe the workspace's container, not
   anyone else's.
+
+---
+
+## Creating a devcontainer
+
+`devc init` writes `.devcontainer/devcontainer.json`, a `Containerfile` and,
+if needed, a `post-create.sh` from building blocks (`go`, `node`, `claude`,
+`private-git`, ...). Without flags it asks: preset, blocks, parameters, name.
+
+```shell
+devc init                       # interactive
+devc init --list                # blocks, presets, parameters
+devc init --preset go --with private-git --set private-git.host=git.example.com
+```
+
+The result is plain files that belong to the project; edit them freely. devc
+does not remember which blocks made them. Blocks and their format live in
+[`scaffold/`](scaffold/README.md). They target the single-container form;
+compose stacks stay hand-written.
 
 ---
 
