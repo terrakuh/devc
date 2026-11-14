@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -48,7 +49,7 @@ func runInit(args []string) error {
 		return fmt.Errorf("init takes no arguments, got %q", fs.Args())
 	}
 
-	cat, err := scaffold.Builtin()
+	cat, err := loadCatalog(context.Background())
 	if err != nil {
 		return err
 	}
@@ -200,12 +201,12 @@ func printCatalog(w io.Writer, cat *scaffold.Catalog) {
 	fmt.Fprintln(w, "Presets:")
 	for _, n := range cat.PresetNames() {
 		p := cat.Presets[n]
-		fmt.Fprintf(w, "  %-16s %s\n  %-16s blocks: %s\n", n, p.Description, "", strings.Join(p.Blocks, ", "))
+		fmt.Fprintf(w, "  %-16s %s%s\n  %-16s blocks: %s\n", n, p.Description, sourceNote(p.Source), "", strings.Join(p.Blocks, ", "))
 	}
 	fmt.Fprintln(w, "\nBlocks (parameters are set with --set block.param=value):")
 	for _, n := range cat.BlockNames() {
 		b := cat.Blocks[n]
-		fmt.Fprintf(w, "  %-16s %s\n", n, b.Description)
+		fmt.Fprintf(w, "  %-16s %s%s\n", n, b.Description, sourceNote(b.Source))
 		for _, p := range b.Params {
 			def := "required"
 			if p.Default != nil {
@@ -296,7 +297,8 @@ func (w *wizard) run(req initRequest) ([]scaffold.File, string, error) {
 	if len(presets) > 0 {
 		fmt.Fprintln(w.out, "Presets:")
 		for i, n := range presets {
-			fmt.Fprintf(w.out, "  %2d  %-16s %s\n", i+1, n, w.cat.Presets[n].Description)
+			p := w.cat.Presets[n]
+			fmt.Fprintf(w.out, "  %2d  %-16s %s%s\n", i+1, n, p.Description, sourceNote(p.Source))
 		}
 		for {
 			a, err := w.ask("Preset (number or name, empty for none): ")
@@ -328,7 +330,8 @@ func (w *wizard) run(req initRequest) ([]scaffold.File, string, error) {
 			} else if slices.ContainsFunc(blocks, func(b *scaffold.Block) bool { return b.Name == n }) {
 				mark = "+"
 			}
-			fmt.Fprintf(w.out, "  %2d %s %-16s %s\n", i+1, mark, n, w.cat.Blocks[n].Description)
+			b := w.cat.Blocks[n]
+			fmt.Fprintf(w.out, "  %2d %s %-16s %s%s\n", i+1, mark, n, b.Description, sourceNote(b.Source))
 		}
 		if expandErr != nil && len(selected) > 0 {
 			fmt.Fprintf(w.out, "  ! %v\n", expandErr)
@@ -443,6 +446,14 @@ func (w *wizard) run(req initRequest) ([]scaffold.File, string, error) {
 			printFiles(w.out, files)
 		}
 	}
+}
+
+// sourceNote marks blocks and presets that come from a store.
+func sourceNote(source string) string {
+	if source == scaffold.BuiltinSource {
+		return ""
+	}
+	return " [" + source + "]"
 }
 
 // pick resolves a 1-based number or a name against options; "" if neither.

@@ -14,6 +14,10 @@ blocks/<name>/
 presets/<name>.jsonc   a named list of blocks with parameter values
 ```
 
+A store (`devc store add`) has the same layout; either folder may be missing.
+Its blocks may require builtin blocks or blocks of another store, and replace
+builtin blocks of the same name.
+
 A preset:
 
 ```jsonc

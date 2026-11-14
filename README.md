@@ -88,6 +88,7 @@ Because the binary runs inside an arbitrary image, it **must** be built static
 | Command                          | What it does                                                                                                                          |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `devc init`                      | create `.devcontainer/` from building blocks; asks interactively, or `--preset`, `--with a,b`, `--without`, `--set block.param=value`, `--list`, `--print`, `--force`. See [Creating a devcontainer](#creating-a-devcontainer) |
+| `devc store [list\|add\|update\|remove]` | manage stores: git repos or folders with more blocks and presets for `devc init`. See [Stores](#stores) |
 | `devc up [service...]`           | build/start, inject the agent, run hooks, write ssh config. Flags: `--recreate`, `--rebuild`, `--code` (open editor once up), `--ssh` (open a shell once up), `--editor <bin>`, `--skip-hooks`, `--rerun-hooks` |
 | `devc down [service...]`         | remove the container(s). `--volumes` (compose), `--purge` (also drop keys, ssh block, control dir), `--auto` (honor `shutdownAction`) |
 | `devc stop [service...]`         | stop without removing                                                                                                                 |
@@ -181,6 +182,29 @@ The result is plain files that belong to the project; edit them freely. devc
 does not remember which blocks made them. Blocks and their format live in
 [`scaffold/`](scaffold/README.md). They target the single-container form;
 compose stacks stay hand-written.
+
+### Stores
+
+A store adds your own blocks and presets: a git repository, or a local folder
+while you write them. It has the same layout as `scaffold/` (`blocks/<name>/`,
+`presets/<name>.jsonc`), and either folder may be missing. A typical personal
+store holds only presets with your values (git host, host key, token variable).
+
+```shell
+devc store add mine ssh://git@git.example.com/me/devc-store.git   # --ref <branch|tag>
+devc store add wip ~/src/devc-store                               # folder, read in place
+devc store                                                        # list
+devc store update                                                 # fetch the latest commits
+devc store remove wip
+```
+
+The list lives in `~/.config/devc/stores.json`, clones in
+`~/.cache/devc/stores/`. A store's block replaces a builtin block of the same
+name (a later store wins over an earlier one); `devc init --list` and the
+wizard mark every block and preset that comes from a store, and the generated
+files name the store and commit each block came from. Store blocks run their
+scripts in your container and may add `runArgs`: only add stores you trust, and
+use `p` in the wizard (or `--print`) to read the result before writing it.
 
 ---
 

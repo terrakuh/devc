@@ -21,6 +21,9 @@ func (s *Selection) Render(name string) ([]File, error) {
 	names := make([]string, len(s.Blocks))
 	for i, b := range s.Blocks {
 		names[i] = b.Name
+		if b.Source != BuiltinSource {
+			names[i] += " from " + b.Source
+		}
 	}
 	origin := fmt.Sprintf("Created by `devc init` (blocks: %s). Edit freely.", strings.Join(names, ", "))
 

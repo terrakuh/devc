@@ -23,6 +23,7 @@ Usage:
 
 Commands:
   init        Create .devcontainer/ from building blocks (interactive)
+  store       Manage stores: git repos or folders with more blocks and presets
   up          Create/start the workspace container(s)
   down        Remove the workspace container(s)
   stop        Stop the workspace without removing it
@@ -61,6 +62,8 @@ func main() {
 		err = runConfig(args)
 	case "init":
 		err = runInit(args)
+	case "store":
+		err = runStore(args)
 	case "up":
 		err = runUp(args)
 	case "down":

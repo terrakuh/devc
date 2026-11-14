@@ -21,9 +21,16 @@ import (
 //go:embed blocks presets
 var builtin embed.FS
 
+// BuiltinSource is the Source of the blocks and presets that ship with devc.
+const BuiltinSource = "builtin"
+
 // Builtin returns the blocks and presets that ship with devc.
 func Builtin() (*Catalog, error) {
-	return Load(builtin)
+	c, err := Load(builtin, BuiltinSource)
+	if err != nil {
+		return nil, err
+	}
+	return c, c.Check()
 }
 
 // Catalog is a set of blocks and presets.
@@ -36,6 +43,8 @@ type Catalog struct {
 type Block struct {
 	Name        string
 	Description string
+	// Source names where the block came from: BuiltinSource or a store.
+	Source string
 	// Base blocks provide FROM; an environment has exactly one.
 	Base     bool
 	Requires []string
@@ -57,17 +66,20 @@ type Param struct {
 // Preset is a named list of blocks with parameter values.
 type Preset struct {
 	Name        string
+	Source      string
 	Description string                       `json:"description"`
 	Blocks      []string                     `json:"blocks"`
 	Params      map[string]map[string]string `json:"params"`
 }
 
-// Load reads blocks/<name>/ and presets/<name>.jsonc from fsys.
-func Load(fsys fs.FS) (*Catalog, error) {
+// Load reads blocks/<name>/ and presets/<name>.jsonc from fsys; either folder
+// may be missing. Blocks may require blocks of another catalog, so call Check
+// once all catalogs are added together.
+func Load(fsys fs.FS, source string) (*Catalog, error) {
 	c := &Catalog{Blocks: map[string]*Block{}, Presets: map[string]*Preset{}}
 
 	entries, err := fs.ReadDir(fsys, "blocks")
-	if err != nil {
+	if err != nil && !isNotExist(err) {
 		return nil, err
 	}
 	for _, e := range entries {
@@ -78,14 +90,8 @@ func Load(fsys fs.FS) (*Catalog, error) {
 		if err != nil {
 			return nil, fmt.Errorf("block %s: %w", e.Name(), err)
 		}
+		b.Source = source
 		c.Blocks[b.Name] = b
-	}
-	for _, b := range c.Blocks {
-		for _, r := range b.Requires {
-			if c.Blocks[r] == nil {
-				return nil, fmt.Errorf("block %s: requires unknown block %q", b.Name, r)
-			}
-		}
 	}
 
 	entries, err = fs.ReadDir(fsys, "presets")
@@ -101,14 +107,42 @@ func Load(fsys fs.FS) (*Catalog, error) {
 		if err := decodeJSONC(fsys, "presets/"+e.Name(), p); err != nil {
 			return nil, fmt.Errorf("preset %s: %w", name, err)
 		}
-		for _, bn := range p.Blocks {
-			if c.Blocks[bn] == nil {
-				return nil, fmt.Errorf("preset %s: unknown block %q", name, bn)
-			}
-		}
+		p.Source = source
 		c.Presets[name] = p
 	}
 	return c, nil
+}
+
+// Add puts o's blocks and presets into c; on equal names o's win, so a store
+// can replace a builtin block.
+func (c *Catalog) Add(o *Catalog) {
+	for n, b := range o.Blocks {
+		c.Blocks[n] = b
+	}
+	for n, p := range o.Presets {
+		c.Presets[n] = p
+	}
+}
+
+// Check reports blocks and presets that name blocks the catalog lacks.
+func (c *Catalog) Check() error {
+	for _, n := range c.BlockNames() {
+		b := c.Blocks[n]
+		for _, r := range b.Requires {
+			if c.Blocks[r] == nil {
+				return fmt.Errorf("block %s (%s): requires unknown block %q", n, b.Source, r)
+			}
+		}
+	}
+	for _, n := range c.PresetNames() {
+		p := c.Presets[n]
+		for _, bn := range p.Blocks {
+			if c.Blocks[bn] == nil {
+				return fmt.Errorf("preset %s (%s): unknown block %q", n, p.Source, bn)
+			}
+		}
+	}
+	return nil
 }
 
 func loadBlock(fsys fs.FS, name string) (*Block, error) {

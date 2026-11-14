@@ -20,9 +20,12 @@ func testCatalog(t *testing.T, blocks map[string]map[string]string) *Catalog {
 			fsys["blocks/"+name+"/"+file] = &fstest.MapFile{Data: []byte(content)}
 		}
 	}
-	c, err := Load(fsys)
+	c, err := Load(fsys, BuiltinSource)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
+	}
+	if err := c.Check(); err != nil {
+		t.Fatalf("Check: %v", err)
 	}
 	return c
 }
