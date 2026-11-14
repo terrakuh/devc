@@ -1,0 +1,9 @@
+# gopls is in the image so it is there on first boot. The VS Code Go extension
+# would offer to install it, but Claude Code's gopls-lsp plugin just stays quiet
+# when the binary is missing. GOBIN puts it on the PATH for every user.
+RUN dnf -y --setopt=install_weak_deps=False install golang && \
+    dnf clean all && rm -rf /var/cache/dnf && \
+    GOBIN=/usr/local/bin go install golang.org/x/tools/gopls@{{.gopls}}
+
+# Tools installed later with `go install` land here.
+ENV PATH=$PATH:/root/go/bin

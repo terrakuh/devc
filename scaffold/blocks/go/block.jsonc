@@ -1,0 +1,7 @@
+{
+	"description": "Go toolchain and gopls",
+	"requires": ["fedora"],
+	"params": {
+		"gopls": { "description": "gopls version", "default": "v0.23.0" }
+	}
+}

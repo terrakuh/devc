@@ -1,0 +1,4 @@
+{
+	"description": "Python 3 with pip, headers and virtualenv",
+	"requires": ["fedora"]
+}

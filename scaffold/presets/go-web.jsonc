@@ -1,0 +1,4 @@
+{
+	"description": "Go backend, Node frontend, Postgres, Playwright e2e, Claude Code",
+	"blocks": ["go", "node", "postgres-client", "playwright", "claude"]
+}

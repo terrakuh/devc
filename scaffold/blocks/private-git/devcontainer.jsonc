@@ -1,0 +1,9 @@
+{
+	"customizations": {
+		"devc": {
+			"credentials": {
+				"forwardAgent": true
+			}
+		}
+	}
+}

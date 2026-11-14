@@ -1,0 +1,4 @@
+{
+	"description": "Go service with Claude Code",
+	"blocks": ["go", "claude"]
+}

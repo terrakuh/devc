@@ -1,0 +1,7 @@
+{
+	"description": "Node.js with npm and pnpm (full ICU)",
+	"requires": ["fedora"],
+	"params": {
+		"version": { "description": "Node major version", "default": "24" }
+	}
+}

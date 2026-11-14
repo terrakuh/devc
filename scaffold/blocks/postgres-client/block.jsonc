@@ -1,0 +1,4 @@
+{
+	"description": "PostgreSQL client tools (psql, pg_dump, pg_isready, ...)",
+	"requires": ["fedora"]
+}

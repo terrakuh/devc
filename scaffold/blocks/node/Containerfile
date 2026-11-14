@@ -1,0 +1,7 @@
+# nodejs{{.version}}-full-i18n carries the full ICU data. Plain nodejs{{.version}} is a
+# small-icu build: `Intl` still accepts "de-DE" but silently formats it as
+# en-US, so "12,50 €" comes out as "€12.50". The node binary knows its own data
+# dir, so NODE_ICU_DATA does not have to be set.
+RUN dnf -y --setopt=install_weak_deps=False install \
+        nodejs{{.version}} nodejs{{.version}}-npm nodejs{{.version}}-full-i18n pnpm && \
+    dnf clean all && rm -rf /var/cache/dnf

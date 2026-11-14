@@ -1,0 +1,7 @@
+{
+	"description": "Run X11 GUI apps on the host's Wayland session through an in-container Xwayland",
+	"requires": ["fedora"],
+	"params": {
+		"display": { "description": "X display number for Xwayland", "default": "77" }
+	}
+}

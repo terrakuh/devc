@@ -1,0 +1,9 @@
+{
+	// mount(2) needs SYS_ADMIN, and SELinux blocks /dev/fuse in a labeled
+	// container.
+	"runArgs": [
+		"--device=/dev/fuse",
+		"--cap-add=SYS_ADMIN",
+		"--security-opt=label=disable"
+	]
+}

@@ -1,0 +1,13 @@
+{
+	// Login, settings and history are shared with the host.
+	"containerEnv": {
+		"CLAUDE_CONFIG_DIR": "/root/.claude"
+	},
+	"mounts": [
+		{
+			"source": "~/.claude",
+			"target": "/root/.claude",
+			"type": "bind"
+		}
+	]
+}

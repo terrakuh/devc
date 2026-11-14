@@ -1,0 +1,22 @@
+{
+	// X11-only apps (SDL, ...) render into an Xwayland server inside the
+	// container, which is in turn a client of the host's Wayland socket mounted
+	// below. Start it with:
+	//   Xwayland :{{.display}} -geometry 1280x800 -decorate &
+	// The display is not :0/:1 because with --network=host the host's abstract X
+	// sockets are shared, so the low numbers are taken and Xwayland refuses them.
+	// The container runs as root, so XDG_RUNTIME_DIR is /run/user/0.
+	"containerEnv": {
+		"XDG_RUNTIME_DIR": "/run/user/0",
+		"WAYLAND_DISPLAY": "wayland-0",
+		"DISPLAY": ":{{.display}}",
+		"SDL_VIDEODRIVER": "x11"
+	},
+	"runArgs": [
+		// Relabeling off so the host's Wayland socket stays usable under SELinux.
+		// Do NOT :z the mount: that would relabel the live host socket.
+		"--security-opt=label=disable",
+		"--volume=${localEnv:XDG_RUNTIME_DIR}/${localEnv:WAYLAND_DISPLAY}:/run/user/0/wayland-0",
+		"--device=/dev/dri"
+	]
+}

@@ -1,0 +1,10 @@
+{
+	"description": "Playwright Chromium: system libraries, fonts, and the browser download",
+	"requires": ["node"],
+	"params": {
+		"dirs": {
+			"description": "Space-separated folders (relative to the workspace) that depend on @playwright/test",
+			"default": "."
+		}
+	}
+}

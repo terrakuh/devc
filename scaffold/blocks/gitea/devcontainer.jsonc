@@ -1,0 +1,7 @@
+{
+	// tea reads these two only at `tea login add`, see post-create.sh.
+	"remoteEnv": {
+		"GITEA_SERVER_URL": "{{.url}}",
+		"GITEA_SERVER_TOKEN": "${localEnv:{{.tokenEnv}}}"
+	}
+}

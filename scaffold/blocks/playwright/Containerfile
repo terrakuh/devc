@@ -1,0 +1,12 @@
+# `playwright install chromium` fetches only the browser build; the shared
+# libraries it links against, fontconfig and actual fonts must come from the
+# distro, and Fedora is not a platform `playwright install-deps` supports.
+# Without fonts + fontconfig the browser launches but SIGTRAPs in Skia the
+# moment a page needs font fallback, so only some pages fail.
+RUN dnf -y --setopt=install_weak_deps=False install \
+        nspr nss atk at-spi2-atk at-spi2-core dbus-libs cups-libs \
+        libX11 libXcomposite libXdamage libXext libXfixes libXrandr \
+        libxcb libxkbcommon mesa-libgbm alsa-lib \
+        fontconfig dejavu-sans-fonts dejavu-serif-fonts liberation-fonts && \
+    dnf clean all && rm -rf /var/cache/dnf && \
+    fc-cache -f

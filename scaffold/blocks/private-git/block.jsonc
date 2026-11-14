@@ -1,0 +1,12 @@
+{
+	"description": "Fetch from a private git host over SSH with the forwarded ssh-agent (also for Go modules)",
+	"requires": ["fedora"],
+	"params": {
+		"host": { "description": "Git host name, e.g. git.example.com" },
+		"sshPort": { "description": "SSH port of the git host", "default": "22" },
+		"hostKey": {
+			"description": "Host key as \"<type> <base64>\" (ssh-keyscan); empty trusts the key seen on first connect",
+			"default": ""
+		}
+	}
+}

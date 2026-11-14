@@ -1,0 +1,4 @@
+{
+	"description": "C/C++ with Python helpers and Claude Code",
+	"blocks": ["c-cpp", "python", "claude"]
+}

@@ -1,0 +1,4 @@
+{
+	"description": "C/C++ compilers and build tools (gcc, clang, make, ccache)",
+	"requires": ["fedora"]
+}

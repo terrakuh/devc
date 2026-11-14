@@ -1,0 +1,7 @@
+{
+	"description": "Claude Code, sharing the host's ~/.claude",
+	"requires": ["fedora"],
+	"params": {
+		"channel": { "description": "\"stable\" (~1 week behind) or \"latest\"", "default": "stable" }
+	}
+}

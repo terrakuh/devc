@@ -1,0 +1,6 @@
+# Xwayland renders X11 clients into the host's Wayland session. The Mesa DRI
+# drivers give hardware GL through /dev/dri and fall back to software
+# (llvmpipe) without it.
+RUN dnf -y --setopt=install_weak_deps=False install \
+        xorg-x11-server-Xwayland mesa-dri-drivers && \
+    dnf clean all && rm -rf /var/cache/dnf

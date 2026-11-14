@@ -1,0 +1,10 @@
+{
+	"description": "Gitea CLI (tea), logged in with a token from the host environment",
+	"requires": ["go"],
+	"params": {
+		"url": { "description": "Gitea URL, e.g. https://git.example.com" },
+		"tokenEnv": { "description": "Host environment variable that holds the access token", "default": "GITEA_TOKEN" },
+		"login": { "description": "Name of the tea login", "default": "gitea" },
+		"tea": { "description": "tea version or commit", "default": "12726f4c9b68e74940dbd514e0acb83e236e7261" }
+	}
+}

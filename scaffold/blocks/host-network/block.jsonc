@@ -1,0 +1,4 @@
+{
+	"description": "Share the host's network namespace (servers are reachable on localhost without forwardPorts)",
+	"requires": ["fedora"]
+}

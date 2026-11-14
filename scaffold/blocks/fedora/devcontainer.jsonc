@@ -1,0 +1,11 @@
+{
+	"build": {
+		"context": ".",
+		"dockerfile": "Containerfile"
+	},
+	// Run a real init as PID 1 so orphaned children get reaped. Without it,
+	// git subprocesses spawned by tooling (gopls, the editor's git integration)
+	// pile up as zombies until the cgroup's pids.max is hit, and then nothing in
+	// the container can start a thread any more.
+	"init": true
+}
