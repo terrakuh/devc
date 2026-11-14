@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/terrakuh/devc/config"
 	"github.com/terrakuh/devc/container"
 	"github.com/terrakuh/devc/runtime"
+	"github.com/terrakuh/devc/scaffold"
 )
 
 // Shell completion: `devc completion <shell>` prints a small script that calls
@@ -25,6 +27,8 @@ var completionCommands = []struct {
 	name string
 	run  func([]string) error
 }{
+	{"init", runInit},
+	{"store", nil}, // subcommands, see complete
 	{"up", runUp},
 	{"down", runDown},
 	{"stop", runStop},
@@ -52,6 +56,14 @@ var serviceCommands = map[string]bool{
 
 var completionShells = []string{"bash", "zsh", "fish"}
 
+var storeCommands = []string{
+	"list\tlist the stores",
+	"add\tadd a store of blocks and presets",
+	"update\tfetch the latest commit",
+	"remove\tforget a store and drop its clone",
+	"help\tshow store usage",
+}
+
 // capturedFlags, when non-nil, receives every flag set newFlagSet builds. The
 // completer sets it and runs a command with -h: each command parses its flags
 // before doing anything else, so it returns flag.ErrHelp having only declared
@@ -71,19 +83,24 @@ func newFlagSet(name string) *flag.FlagSet {
 // commandFlags returns the flag set the named command declares, or nil.
 func commandFlags(name string) *flag.FlagSet {
 	for _, c := range completionCommands {
-		if c.name != name || c.run == nil {
-			continue
+		if c.name == name && c.run != nil {
+			return captureFlags(c.run)
 		}
-		var got []*flag.FlagSet
-		capturedFlags = &got
-		err := c.run([]string{"-h"})
-		capturedFlags = nil
-		if !errors.Is(err, flag.ErrHelp) || len(got) == 0 {
-			return nil
-		}
-		return got[0]
 	}
 	return nil
+}
+
+// captureFlags runs run with args plus -h and returns the flag set it declares,
+// or nil.
+func captureFlags(run func([]string) error, args ...string) *flag.FlagSet {
+	var got []*flag.FlagSet
+	capturedFlags = &got
+	err := run(append(args, "-h"))
+	capturedFlags = nil
+	if !errors.Is(err, flag.ErrHelp) || len(got) == 0 {
+		return nil
+	}
+	return got[0]
 }
 
 // directiveFiles, printed alone, hands the word back to the shell's own file
@@ -131,49 +148,73 @@ func complete(ctx context.Context, words []string) []string {
 	}
 
 	cmd, args := words[0], words[1:len(words)-1]
-	if cmd == "completion" {
+	var fs *flag.FlagSet
+	switch cmd {
+	case "completion":
 		if len(args) == 0 {
 			return filterPrefix(completionShells, cur)
 		}
 		return nil
+	case "store":
+		if len(args) == 0 {
+			return filterPrefix(storeCommands, cur)
+		}
+		switch args[0] {
+		case "update":
+			return filterPrefix(without(storeNames(), args[1:]), cur)
+		case "remove":
+			if len(args) == 1 {
+				return filterPrefix(storeNames(), cur)
+			}
+			return nil
+		case "add":
+			cmd, args = "store add", args[1:]
+			fs = captureFlags(runStore, "add")
+		}
+	default:
+		fs = commandFlags(cmd)
 	}
-	fs := commandFlags(cmd)
 	if fs == nil {
 		return nil
 	}
+	// store add takes flags between and after its arguments too.
+	interleaved := cmd == "store add"
 
 	// Walk the words before cur the way flag.Parse would, to learn whether cur
-	// is a flag value, a flag, or a positional argument.
+	// is a flag value, a flag, or a positional argument (and which one).
 	var pending *flag.Flag // flag whose separate value cur is
-	positional := false
+	flagsDone := false
+	positional := 0
 	for _, w := range args {
-		if pending != nil {
+		switch {
+		case pending != nil:
 			pending = nil
-			continue
-		}
-		if w == "--" || !strings.HasPrefix(w, "-") || w == "-" {
-			positional = true
-			break
-		}
-		name := strings.TrimLeft(w, "-")
-		if strings.Contains(name, "=") {
-			continue
-		}
-		if f := fs.Lookup(name); f != nil && !isBoolFlag(f) {
-			pending = f
+		case w == "--" && !flagsDone:
+			flagsDone = true
+		case flagsDone || !strings.HasPrefix(w, "-") || w == "-":
+			positional++
+			flagsDone = flagsDone || !interleaved
+		default:
+			name := strings.TrimLeft(w, "-")
+			if strings.Contains(name, "=") {
+				continue
+			}
+			if f := fs.Lookup(name); f != nil && !isBoolFlag(f) {
+				pending = f
+			}
 		}
 	}
 	if pending != nil {
-		return completeFlagValue(ctx, fs, args, pending, "", cur)
+		return completeFlagValue(ctx, cmd, fs, args, pending, "", cur)
 	}
 
-	if !positional && strings.HasPrefix(cur, "-") {
+	if !flagsDone && strings.HasPrefix(cur, "-") {
 		if name, val, ok := strings.Cut(strings.TrimLeft(cur, "-"), "="); ok {
 			f := fs.Lookup(name)
 			if f == nil {
 				return nil
 			}
-			return completeFlagValue(ctx, fs, args, f, cur[:len(cur)-len(val)], val)
+			return completeFlagValue(ctx, cmd, fs, args, f, cur[:len(cur)-len(val)], val)
 		}
 		return filterPrefix(flagCandidates(fs), cur)
 	}
@@ -183,6 +224,9 @@ func complete(ctx context.Context, words []string) []string {
 		return filterPrefix(services(ctx, fs, args), cur)
 	case cmd == "exec":
 		// The command to run inside the container; plain file completion.
+		return []string{directiveFiles}
+	case cmd == "store add" && positional == 1:
+		// <git-url|folder>; only a folder can be completed.
 		return []string{directiveFiles}
 	}
 	return nil
@@ -201,9 +245,21 @@ func flagCandidates(fs *flag.FlagSet) []string {
 	return out
 }
 
-// completeFlagValue completes val as the value of flag f. prefix is prepended to
-// every candidate (the "--flag=" of the inline form).
-func completeFlagValue(ctx context.Context, fs *flag.FlagSet, args []string, f *flag.Flag, prefix, val string) []string {
+// completeFlagValue completes val as the value of cmd's flag f. prefix is
+// prepended to every candidate (the "--flag=" of the inline form).
+func completeFlagValue(ctx context.Context, cmd string, fs *flag.FlagSet, args []string, f *flag.Flag, prefix, val string) []string {
+	if cmd == "init" {
+		switch f.Name {
+		case "name":
+			return nil // the new devcontainer.json's name, not a workspace
+		case "preset", "with", "without", "set":
+			out := initFlagValue(fs, args, f.Name, val)
+			for i := range out {
+				out[i] = prefix + out[i]
+			}
+			return out
+		}
+	}
 	var out []string
 	switch f.Name {
 	case "path", "config":
@@ -290,6 +346,96 @@ func services(ctx context.Context, fs *flag.FlagSet, args []string) []string {
 		return nil
 	}
 	return names
+}
+
+// initFlagValue completes the init flags that name presets, blocks and block
+// parameters.
+func initFlagValue(fs *flag.FlagSet, args []string, name, val string) []string {
+	cat := completionCatalog()
+	if cat == nil {
+		return nil
+	}
+	var out []string
+	switch name {
+	case "preset":
+		for _, n := range cat.PresetNames() {
+			out = append(out, n+"\t"+cat.Presets[n].Description)
+		}
+	case "with", "without":
+		// A comma-separated list: complete its last element.
+		done := val[:strings.LastIndex(val, ",")+1]
+		names := cat.BlockNames()
+		if name == "without" {
+			// Only what the typed --preset and --with would bring in.
+			_ = fs.Parse(args)
+			if p := cat.Presets[fs.Lookup("preset").Value.String()]; p != nil {
+				names = append(slices.Clone(p.Blocks), splitList(fs.Lookup("with").Value.String())...)
+			}
+		}
+		for _, n := range without(names, splitList(done)) {
+			if b := cat.Blocks[n]; b != nil {
+				out = append(out, done+n+"\t"+b.Description)
+			}
+		}
+	case "set":
+		for _, n := range cat.BlockNames() {
+			for _, p := range cat.Blocks[n].Params {
+				out = append(out, n+"."+p.Name+"=\t"+p.Description)
+			}
+		}
+	}
+	return filterPrefix(out, val)
+}
+
+// completionCatalog is the catalog devc init reads, minus git stores without a
+// clone yet: completion must not wait for a fetch.
+func completionCatalog() *scaffold.Catalog {
+	cat, err := scaffold.Builtin()
+	if err != nil {
+		return nil
+	}
+	stores, err := scaffold.LoadStores(storesFile())
+	if err != nil {
+		return cat
+	}
+	cache := storeCacheDir()
+	for _, st := range stores.Stores {
+		if !st.Fetched(cache) {
+			continue
+		}
+		if c, err := st.Load(cache); err == nil {
+			cat.Add(c)
+		}
+	}
+	return cat
+}
+
+// storeNames lists the configured stores with their source.
+func storeNames() []string {
+	stores, err := scaffold.LoadStores(storesFile())
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, st := range stores.Stores {
+		source := st.URL
+		if st.Path != "" {
+			source = st.Path
+		}
+		out = append(out, st.Name+"\t"+source)
+	}
+	return out
+}
+
+// without drops the candidates whose value is in taken.
+func without(cands, taken []string) []string {
+	var out []string
+	for _, c := range cands {
+		if v, _, _ := strings.Cut(c, "\t"); !slices.Contains(taken, v) {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func isBoolFlag(f *flag.Flag) bool {

@@ -44,8 +44,9 @@ for amd64 and arm64 are attached to each GitHub release.
 
 `devc completion <bash|zsh|fish>` prints a completion script. It completes
 commands, flags, flag values (`--runtime`, `--selinux`, paths), workspace names
-for `-n`/`--name`, and compose service names for `up`/`down`/`stop`/`restart`/
-`logs`/`ps`/`exec --service`.
+for `-n`/`--name`, compose service names for `up`/`down`/`stop`/`restart`/
+`logs`/`ps`/`exec --service`, presets, blocks and block parameters for
+`init --preset`/`--with`/`--without`/`--set`, and store names for `store`.
 
 ```shell
 # bash (~/.bashrc)

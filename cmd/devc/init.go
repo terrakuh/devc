@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -31,7 +30,7 @@ type initRequest struct {
 // interactively when neither --preset nor --with is given and stdin is a
 // terminal.
 func runInit(args []string) error {
-	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs := newFlagSet("init")
 	path := fs.String("path", ".", "project directory")
 	preset := fs.String("preset", "", "start from this preset")
 	with := fs.String("with", "", "comma-separated blocks to add")

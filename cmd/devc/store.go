@@ -48,7 +48,7 @@ func runStore(args []string) error {
 		return nil
 
 	case "add":
-		fs := flag.NewFlagSet("store add", flag.ContinueOnError)
+		fs := newFlagSet("store add")
 		ref := fs.String("ref", "", "branch or tag to follow (default: the remote's default branch)")
 		pos, err := parseInterleaved(fs, args)
 		if err != nil {

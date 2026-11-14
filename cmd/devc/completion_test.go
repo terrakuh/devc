@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -56,7 +58,7 @@ func TestComplete(t *testing.T) {
 		words []string
 		want  []string
 	}{
-		{"command prefix", []string{"st"}, []string{"stop", "status"}},
+		{"command prefix", []string{"st"}, []string{"store", "stop", "status"}},
 		{"shells", []string{"completion", ""}, []string{"bash", "zsh", "fish"}},
 		{"flag prefix", []string{"logs", "--fo"}, []string{"--follow", "--forward-agent"}},
 		{"separate value", []string{"up", "--selinux", ""}, []string{"auto", "z", "Z", "none"}},
@@ -70,7 +72,21 @@ func TestComplete(t *testing.T) {
 		{"no flags after a positional", []string{"exec", "--", "-"}, []string{directiveFiles}},
 		{"unknown command", []string{"nope", ""}, nil},
 		{"unknown flag", []string{"up", "--nope=x"}, nil},
+		{"up --ssh", []string{"up", "--ss"}, []string{"--ssh"}},
+		{"init preset", []string{"init", "--preset", "go"}, []string{"go", "go-web"}},
+		{"init with list", []string{"init", "--with=go,no"}, []string{"--with=go,node"}},
+		{"init with skips chosen", []string{"init", "--with", "go,g"}, []string{"go,gitea"}},
+		{"init without from preset", []string{"init", "--preset", "go-web", "--without", "p"}, []string{"postgres-client", "playwright"}},
+		{"init set", []string{"init", "--set", "go."}, []string{"go.gopls="}},
+		{"init name is free text", []string{"init", "--name", ""}, nil},
+		{"init path", []string{"init", "--path", ""}, []string{directiveFiles}},
+		{"store commands", []string{"store", "re"}, []string{"remove"}},
+		{"store add flags", []string{"store", "add", "--r"}, []string{"--ref"}},
+		{"store add name", []string{"store", "add", ""}, nil},
+		{"store add location", []string{"store", "add", "--ref", "main", "mine", ""}, []string{directiveFiles}},
+		{"store add flag after args", []string{"store", "add", "mine", "~/x", "--r"}, []string{"--ref"}},
 	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // no stores
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, values(complete(ctx, tt.words)))
@@ -84,4 +100,20 @@ func TestCompleteFlagSpelling(t *testing.T) {
 	assert.Contains(t, got, "-n")
 	assert.Contains(t, got, "--service")
 	assert.Contains(t, got, "--name")
+}
+
+func TestCompleteStores(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "blocks", "mine"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "blocks", "mine", "block.jsonc"), []byte(`{"description": "my block", "requires": ["fedora"]}`), 0o644))
+	require.NoError(t, runStore([]string{"add", "local", dir}))
+	require.NoError(t, runStore([]string{"add", "other", dir}))
+
+	ctx := context.Background()
+	assert.Equal(t, []string{"local", "other"}, values(complete(ctx, []string{"store", "remove", ""})))
+	assert.Nil(t, complete(ctx, []string{"store", "remove", "local", ""}))
+	assert.Equal(t, []string{"other"}, values(complete(ctx, []string{"store", "update", "local", ""})))
+	assert.Equal(t, []string{"mine"}, values(complete(ctx, []string{"init", "--with", "mi"})), "store blocks complete too")
 }
