@@ -2,6 +2,6 @@
 	"description": "Fedora base image with everyday CLI tools",
 	"base": true,
 	"params": {
-		"version": { "description": "Fedora release", "default": "44" }
+		"version": { "description": "Fedora release", "default": "45" }
 	}
 }

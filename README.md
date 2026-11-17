@@ -143,7 +143,7 @@ but that were never created, and stars the one devc attaches to.
 SERVICE     STATE        CONTAINER     IMAGE
 cache       not created  -             -
 db          exited       a1b2c3d4e5f6  postgres:16
-workspace*  running      0f9e8d7c6b5a  fedora:44
+workspace*  running      0f9e8d7c6b5a  fedora:45
 
 * the workspace service devc attaches to
 ```
@@ -251,7 +251,7 @@ Both options are opt-in under `customizations.devc.credentials`:
 
 ```jsonc
 {
-  "image": "fedora:44",
+  "image": "fedora:45",
   "customizations": {
     "devc": {
       "credentials": {
